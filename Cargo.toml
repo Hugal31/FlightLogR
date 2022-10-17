@@ -1,0 +1,19 @@
+[package]
+name = "flightlogr"
+version = "0.1.0"
+edition = "2021"
+description = """Rust version of the FlightLGo software from snip.
+Listen for OGN APRS stream and log landing and takeoffs."""
+
+[dependencies]
+anyhow = "1.0.65"
+chrono = "0.4.22"
+dms-coordinates = "1.1"
+geo = "0.23"
+itertools = "0.10.5"
+pest = "2.4"
+pest_derive = "2.4"
+quantities = { version = "0.11", features=["duration", "length", "speed"], optional=true }
+
+[features]
+default = ["quantities"]
