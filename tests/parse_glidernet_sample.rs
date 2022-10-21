@@ -12,7 +12,7 @@ fn read_glidernet_sample() {
     let reader = BufReader::new(file);
     let (mut success, mut failure) = (0, 0);
     for line in reader.lines().map(|l| l.expect("should read line")) {
-        if !line.starts_with("#") {
+        if !line.starts_with('#') {
             match line.parse::<Report>() {
                 Ok(_) => success += 1,
                 Err(e) => {

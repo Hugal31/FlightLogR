@@ -8,10 +8,10 @@ aprs_information_field = _{ position_report }
 
 // Position report
 position_report = { position_report_with_timestamp | position_report_without_timestamp }
-position_report_with_timestamp = ${ ("/" | "@") ~ (time_hms | time_dhm) ~ position_report_body }
-position_report_without_timestamp = ${ ("!" | "=") ~ position_report_body }
-position_report_body = ${ (latitude_longitude_symbol ~ position_report_data_extension? | compressed_location_and_symbol) ~ comment }
-position_report_data_extension = { course_speed | phg | radio_range | dfs_signal_strength }
+position_report_with_timestamp = ${ ("/" | "@") ~ (time_hms | time_dhm) ~ position_report_body ~ comments }
+position_report_without_timestamp = ${ ("!" | "=") ~ position_report_body ~ comments }
+position_report_body = ${ (latitude_longitude_symbol ~ position_report_data_extension? | compressed_location_and_symbol) }
+position_report_data_extension = _{ course_speed | phg | radio_range | dfs_signal_strength }
 course_speed = ${ course ~ "/" ~ speed }
 course = { null_three_digits | digit{3} }
 speed = { null_three_digits | digit{3} }
@@ -21,19 +21,20 @@ radio_range = @{ "RNG" ~ digit{4} }
 dfs_signal_strength = @{ "DFS" ~ digit{4} }
 
 // Comment
-comment = { comment_field+ }
-comment_field = {
+comments = !{ comment_field+ }
+comment_field = _{
     altitude
     | position_precision_enhancement
     | id
     | rotation_rate
+    | climb_rate
     | flight_level
     | unknown_comment }
 altitude = ${ "/A=" ~ digit{6} }
 position_precision_enhancement = ${ "!W" ~ digit{2} ~ "!" }
 id = ${ "id" ~ ASCII_ALPHANUMERIC{8} }
-climb_rate = ${ number ~ "fpm" }
-rotation_rate = ${ number ~ "rot" }
+climb_rate = ${ number_with_sign ~ "fpm" }
+rotation_rate = ${ number_with_sign ~ "rot" }
 flight_level = ${ "FL" ~ number }
 unknown_comment = @{ non_whitespace+ }
 
@@ -71,11 +72,9 @@ letter = _{ ASCII_ALPHA }
 digit = _{ ASCII_DIGIT }
 space = { " " }
 base_91_char = { '!' .. '/' }
-// TODO Rationalize
-number_with_sign = @{ sign ~ number }
-number = @{ digit+ ~ ( "." ~ integer )? }
-sign = {"+" | "-"}
-integer = { digit+ }
-float = @{ integer ~ "." ~ integer }
+number_with_sign = @{ sign? ~ number }
+number = @{ integer ~ ( "." ~ integer )? }
+sign = { "+" | "-" }
+integer = @{ digit+ }
 WHITESPACE = _{ " " }
 non_whitespace = _{ !WHITESPACE ~ ANY }

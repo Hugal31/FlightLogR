@@ -29,7 +29,7 @@ impl APRSParser {
         match information_field_ast.as_rule() {
             Rule::position_report => {
                 Self::parse_position_report(information_field_ast.into_inner().next().unwrap())
-                    .map(|r| Report::PositionReport(r))
+                    .map(Report::PositionReport)
             }
             _ => unreachable!(),
         }
@@ -101,17 +101,10 @@ impl APRSParser {
         match coordinates_ast.as_rule() {
             Rule::latitude_longitude_symbol => {
                 let (coords, symbol) = Self::parse_coords_and_symbol(coordinates_ast)?;
-                let has_data_extension = inner
-                    .peek()
-                    .map(|p| p.as_rule() == Rule::position_report_data_extension)
-                    .unwrap_or(false);
-                let data_extension = if has_data_extension {
-                    Some(Self::parse_position_report_data_extension(
-                        inner.next().unwrap().into_inner().next().unwrap(),
-                    )?)
-                } else {
-                    None
-                };
+                let data_extension = inner
+                    .next()
+                    .map(Self::parse_position_report_data_extension)
+                    .transpose()?;
                 Ok((symbol, coords, data_extension))
             }
             Rule::compressed_location_and_symbol => {
@@ -147,7 +140,7 @@ impl APRSParser {
         let (before_dot, after_dot) = s
             .splitn(2, '.')
             .collect_tuple()
-            .ok_or(format_err!("invalid coordinate: \"{}\"", s))?;
+            .ok_or_else(|| format_err!("invalid coordinate: \"{}\"", s))?;
         let (degrees_str, minutes_str) =
             before_dot.split_at(if before_dot.len() == 5 { 3 } else { 2 });
         let (seconds_str, bearing) = after_dot.split_at(2);
@@ -221,30 +214,42 @@ impl APRSParser {
         }
     }
 
-    fn parse_altitude(pair: Pair<Rule>) -> Result<f64> {
-        if let Some((reference, altitude_str)) = pair.as_str().splitn(2, "=").collect_tuple() {
-            if reference == "A" {
-                Ok(altitude_str.parse()?)
-            } else {
-                Err(format_err!(
-                    "Unknown altitude format {}",
-                    pair.as_str()
-                ))
-            }
-        } else {
-            Err(format_err!(
-                "Unknown altitude format {}",
-                pair.as_str()
-            ))
-        }
-    }
-
     fn parse_comments(pair: Pair<Rule>) -> Result<Vec<Comment>> {
-        todo!()
+        Ok(pair
+            .into_inner()
+            // Store failures as unknown
+            .map(|p| {
+                Self::parse_comment(p.clone())
+                    .unwrap_or_else(|_| Comment::Unknown(p.as_str().to_owned()))
+            })
+            .collect())
     }
 
-    fn parse_aircraft_id(pair: Pair<Rule>) -> Result<u32> {
-        Ok(pair.as_str().split_at(2).1.parse()?)
+    fn parse_comment(pair: Pair<Rule>) -> Result<Comment> {
+        match pair.as_rule() {
+            Rule::altitude => (&pair.as_str()["/A=".len()..])
+                .parse()
+                .map(Comment::Altitude)
+                .map_err(Into::into),
+            Rule::position_precision_enhancement => {
+                let digits = &pair.as_str()[2..4];
+                Ok(Comment::PositionPrecisionEnhancement {
+                    lat: (&digits[0..1]).parse()?,
+                    lon: (&digits[1..2]).parse()?,
+                })
+            }
+            Rule::climb_rate => Ok(Comment::ClimbRate(
+                (pair.into_inner().next().unwrap().as_str()).parse()?,
+            )),
+            Rule::rotation_rate => Ok(Comment::TurningRate(
+                (pair.into_inner().next().unwrap().as_str()).parse()?,
+            )),
+            Rule::flight_level => Ok(Comment::FlightLevel(
+                (pair.into_inner().next().unwrap().as_str()).parse()?,
+            )),
+            Rule::id => Ok(Comment::Id((&pair.as_str()[2..]).to_string())),
+            _ => Ok(Comment::Unknown(pair.as_str().to_owned())),
+        }
     }
 }
 
@@ -257,7 +262,7 @@ mod test {
 
     #[test]
     fn test_parse_example_01() {
-        let report: Report = "OGN123456>OGNAPP:/123456h5123.45N/00123.45W'180/025/A=001000 !W66! id07123456 -100fpm +1.0rot FL011.00 gps4x5".parse()
+        let report: Report = "OGN123456>OGNAPP:/123456h5123.45N/00123.45W'180/025/A=001000 !W65! id07123456 -100fpm +1.0rot FL011.00 gps4x5".parse()
             .expect("should have parsed");
 
         #[allow(irrefutable_let_patterns)]
@@ -269,22 +274,56 @@ mod test {
             assert_eq!(report.symbol, [b'/', b'\'']);
             assert_eq!(
                 report.point().y(),
-                DMS::new(51, 23, 45.0, Bearing::North).to_decimal_degrees()
+                DMS::new(51, 23, 45.6, Bearing::North).to_decimal_degrees()
             );
             assert_eq!(
                 report.point().x(),
-                DMS::new(1, 23, 45.0, Bearing::West).to_decimal_degrees()
+                DMS::new(1, 23, 45.5, Bearing::West).to_decimal_degrees()
             );
             assert_eq!(report.course(), Some(180));
             assert_eq!(report.speed(), Some(25.0));
-            /*            assert_eq!(report.track, 180.);
-                        assert_eq!(report.speed, 25.);
-                        assert_eq!(report.altitude, 1000.);
-                        assert_eq!(report.aircraft_id, Some(7123456));
-                        assert_eq!(report.climb_rate, Some(-100.));
-                        assert_eq!(report.turning_rate, Some(1.));
-                        assert_eq!(report.flight_level, Some(11.));
-            */
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    &Comment::Altitude(a) => Some(a),
+                    _ => None,
+                }),
+                Some(1000.0)
+            );
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    &Comment::PositionPrecisionEnhancement { lat, lon } => Some((lat, lon)),
+                    _ => None,
+                }),
+                Some((6, 5))
+            );
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    Comment::Id(id) => Some(id as &str),
+                    _ => None,
+                }),
+                Some("07123456")
+            );
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    &Comment::ClimbRate(cr) => Some(cr),
+                    _ => None,
+                }),
+                Some(-100.0)
+            );
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    &Comment::TurningRate(tr) => Some(tr),
+                    _ => None,
+                }),
+                Some(1.0)
+            );
+            assert_eq!(
+                report.comments.iter().find_map(|c| match c {
+                    &Comment::FlightLevel(fl) => Some(fl),
+                    _ => None,
+                }),
+                Some(11.0)
+            );
         }
     }
 

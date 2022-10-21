@@ -103,7 +103,7 @@ impl PositionReport {
 }
 
 impl Display for PositionReport {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some(timestamp) = &self.timestamp {
             Display::fmt(timestamp, f)?;
         }
@@ -155,7 +155,7 @@ impl PositionReportTime {
 }
 
 impl Display for PositionReportTime {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::HMS(time) => write!(
                 f,
@@ -187,7 +187,7 @@ impl DHM {
 }
 
 impl Display for DHM {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let indicator = match self.utc {
             true => 'z',
             false => '/',
@@ -247,7 +247,7 @@ impl PositionReportCoordinates {
 }
 
 impl Display for PositionReportCoordinates {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Self::format_lat(self.point.y(), f)?;
         Self::format_lon(self.point.x(), f)
     }
@@ -263,7 +263,7 @@ impl Display for Base91 {
         while n > 91 {
             let d = n % 91;
             buff.push((d as u8 + b'!') as _);
-            n = n / 91;
+            n /= 91;
         }
         buff.push((n as u8 + b'!') as _);
 
@@ -318,7 +318,7 @@ impl PositionReportDataExtension {
 }
 
 impl Display for PositionReportDataExtension {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::CourseSpeed { course, speed } => write!(f, "{:03}/{:03}", course, speed),
             Self::CompressedData { cs, indicator } => write!(
@@ -355,7 +355,7 @@ impl Display for Comment {
         match self {
             Self::Altitude(a) => write!(f, "/A={:06.0}", a),
             Self::PositionPrecisionEnhancement { lat, lon } => write!(f, "!W{}{}!", lat, lon),
-            Self::Id(s) => f.write_str(&s),
+            Self::Id(s) => write!(f, "id{}", s),
             Self::FlightLevel(fl) => write!(f, "FL{:03.2}", fl),
             Self::ClimbRate(cr) => write!(f, "{:+.1}fpm", cr),
             Self::TurningRate(tr) => write!(f, "{:+.1}rot", tr),
