@@ -1,5 +1,5 @@
 use anyhow::{format_err, Context, Result};
-use chrono::{DateTime, NaiveTime, Utc};
+use chrono::NaiveTime;
 use dms_coordinates::{Bearing, DMS};
 use itertools::Itertools;
 use pest::{iterators::Pair, Parser};
@@ -207,23 +207,6 @@ impl APRSParser {
         }
     }
 
-    /// Find the closest datetime between today, yesterday and tomorrow
-    fn guess_date(time: NaiveTime, now: DateTime<Utc>) -> DateTime<Utc> {
-        let datetime = now.date().and_time(time).expect("date should be valid");
-
-        let one_day = chrono::Duration::days(1);
-        let time_from_now = (now - datetime).num_seconds().abs();
-        let time_from_yesterday = (now - (datetime - one_day)).num_seconds().abs();
-        let time_to_tomorrow = (now - (datetime + one_day)).num_seconds().abs();
-        if time_from_yesterday < time_from_now && time_from_yesterday < time_to_tomorrow {
-            datetime - one_day
-        } else if time_to_tomorrow < time_from_now && time_to_tomorrow < time_from_yesterday {
-            datetime + one_day
-        } else {
-            datetime
-        }
-    }
-
     fn parse_comments(pair: Pair<Rule>) -> Result<Vec<Comment>> {
         Ok(pair
             .into_inner()
@@ -267,8 +250,6 @@ impl APRSParser {
 mod test {
     use super::*;
     use crate::aprs::APRSTimestamp;
-    use assert_matches::assert_matches;
-    use chrono::NaiveDate;
     use dms_coordinates::{Bearing, DMS};
 
     #[test]
@@ -368,30 +349,6 @@ mod test {
         assert_eq!(
             APRSParser::parse_ambiguous_number_pair("82").expect("should parse"),
             (82, 2)
-        );
-    }
-
-    #[test]
-    fn test_parse_datetime() {
-        let today = NaiveDate::from_ymd(2022, 10, 16);
-        let morning = DateTime::from_utc(today.and_time(NaiveTime::from_hms(2, 0, 0)), Utc);
-        let evening = DateTime::<Utc>::from_utc(today.and_time(NaiveTime::from_hms(22, 0, 0)), Utc);
-
-        assert_eq!(
-            APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), morning).date_naive(),
-            NaiveDate::from_ymd(2022, 10, 16)
-        );
-        assert_eq!(
-            APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), morning).date_naive(),
-            NaiveDate::from_ymd(2022, 10, 15)
-        );
-        assert_eq!(
-            APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), evening).date_naive(),
-            NaiveDate::from_ymd(2022, 10, 17)
-        );
-        assert_eq!(
-            APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), evening).date_naive(),
-            NaiveDate::from_ymd(2022, 10, 16)
         );
     }
 }

@@ -4,7 +4,8 @@ use std::{
     time::Duration,
 };
 
-use chrono::{NaiveTime, Timelike};
+use anyhow::{format_err, Result};
+use chrono::{Date, DateTime, Datelike, NaiveTime, TimeZone, Timelike, Utc};
 use dms_coordinates::DMS;
 
 pub mod parsing;
@@ -16,6 +17,26 @@ pub type Symbol = [u8; 2];
 pub enum Report {
     PositionReport(PositionReport),
     StatusReport(StatusReport),
+}
+
+impl Report {
+    pub fn timestamp(&self) -> Option<APRSTimestamp> {
+        match self {
+            Self::PositionReport(report) => report.timestamp.clone(),
+            Self::StatusReport(report) => Some(report.timestamp.clone()),
+        }
+    }
+
+    pub fn datetime(&self) -> Option<Result<DateTime<Utc>>> {
+        self.datetime_with_now(Utc::now())
+    }
+
+    pub fn datetime_with_now(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Option<Result<DateTime<Utc>>> {
+        self.timestamp().map(|t| t.guess_datetime(now))
+    }
 }
 
 impl Display for Report {
@@ -153,6 +174,42 @@ impl APRSTimestamp {
             Self::HMS(_) => Duration::from_secs(1),
             Self::DHM(_) => Duration::from_secs(60),
         }
+    }
+
+    pub fn guess_datetime(&self, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
+        match *self {
+            Self::HMS(naive_time) => guess_date(naive_time, now),
+            Self::DHM(DHM { day, time, utc }) => {
+                if utc {
+                    let today = now.date();
+                    let date = today.clone();
+                    match date.with_day(day) {
+                        Some(d) if d <= today => d
+                            .and_time(time)
+                            .ok_or_else(|| format_err!("could not compose time")),
+                        // Try last month
+                        _ => last_month(date)
+                            .and_then(|d| d.with_day(day))
+                            .and_then(|d| d.and_time(time))
+                            .ok_or_else(|| format_err!("could not guess date")),
+                    }
+                } else {
+                    // TODO Implement timezone guess
+                    Err(format_err!(
+                        "could not guess the datetime from a local time"
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn last_month<Tz: TimeZone>(date: Date<Tz>) -> Option<Date<Tz>> {
+    if date.month0() == 0 {
+        date.with_year(date.year() - 1)
+            .and_then(|d| d.with_month0(11))
+    } else {
+        date.with_month(date.month() - 1)
     }
 }
 
@@ -378,9 +435,41 @@ impl Display for StatusReport {
     }
 }
 
+/// Find the closest datetime between today, yesterday and tomorrow
+fn guess_date(time: NaiveTime, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
+    let today = now.date();
+    let yesterday = today.clone() - chrono::Duration::days(1);
+    let tomorrow = today.clone() + chrono::Duration::days(1);
+
+    let datetime_today = today
+        .and_time(time)
+        .ok_or_else(|| format_err!("could not guess datetime {:?} with {}", today, time))?;
+    let datetime_tomorrow = tomorrow
+        .and_time(time)
+        .ok_or_else(|| format_err!("could not guess datetime {:?} with {}", tomorrow, time))?;
+    let datetime_yesterday = yesterday
+        .and_time(time)
+        .ok_or_else(|| format_err!("could not guess datetime {:?} with {}", yesterday, time))?;
+
+    let leeway = chrono::Duration::minutes(30);
+
+    let time_to_tomorrow = datetime_tomorrow.clone() - now.clone();
+    let time_from_now = datetime_today.clone() - now;
+    if time_to_tomorrow < leeway {
+        // If datetime_tomorrow is in 30 minutes, accept it
+        Ok(datetime_tomorrow)
+    } else if time_from_now < leeway {
+        // If datetime_today is in the past OR in less than thirty minutes, this is it
+        Ok(datetime_today)
+    } else {
+        Ok(datetime_yesterday)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::NaiveDate;
     use dms_coordinates::Bearing;
     use float_eq::assert_float_eq;
     use geo::Point;
@@ -510,5 +599,80 @@ mod test {
         let point = report.point();
         assert_float_eq!(point.x(), expected_lon.to_decimal_degrees(), abs <= 1.0e-5);
         assert_float_eq!(point.y(), expected_lat.to_decimal_degrees(), abs <= 1.0e-5);
+    }
+
+    #[test]
+    fn test_guess_datetime() {
+        let today = NaiveDate::from_ymd(2022, 10, 16);
+        let morning = DateTime::<Utc>::from_utc(today.and_time(NaiveTime::from_hms(2, 0, 0)), Utc);
+        let night = DateTime::<Utc>::from_utc(today.and_time(NaiveTime::from_hms(23, 45, 0)), Utc);
+
+        assert_eq!(
+            guess_date(NaiveTime::from_hms(1, 58, 0), morning)
+                .expect("should guess")
+                .date_naive(),
+            NaiveDate::from_ymd(2022, 10, 16)
+        );
+        assert_eq!(
+            guess_date(NaiveTime::from_hms(23, 0, 0), morning)
+                .expect("should guess")
+                .date_naive(),
+            NaiveDate::from_ymd(2022, 10, 15)
+        );
+        assert_eq!(
+            guess_date(NaiveTime::from_hms(23, 50, 0), night)
+                .expect("should guess")
+                .date_naive(),
+            NaiveDate::from_ymd(2022, 10, 16)
+        );
+        assert_eq!(
+            guess_date(NaiveTime::from_hms(0, 5, 0), night)
+                .expect("should guess")
+                .date_naive(),
+            NaiveDate::from_ymd(2022, 10, 17)
+        );
+        assert_eq!(
+            guess_date(NaiveTime::from_hms(1, 0, 0), night)
+                .expect("should guess")
+                .date_naive(),
+            NaiveDate::from_ymd(2022, 10, 16)
+        );
+
+        assert_eq!(
+            APRSTimestamp::HMS(NaiveTime::from_hms(1, 58, 30))
+                .guess_datetime(morning)
+                .expect("should guess date"),
+            DateTime::parse_from_rfc3339("2022-10-16T01:58:30Z").unwrap()
+        );
+        assert_eq!(
+            APRSTimestamp::DHM(DHM {
+                day: 16,
+                time: NaiveTime::from_hms(1, 57, 0),
+                utc: true
+            })
+            .guess_datetime(morning)
+            .expect("should guess date"),
+            DateTime::parse_from_rfc3339("2022-10-16T01:57:00Z").unwrap()
+        );
+        assert_eq!(
+            APRSTimestamp::DHM(DHM {
+                day: 15,
+                time: NaiveTime::from_hms(1, 57, 0),
+                utc: true
+            })
+            .guess_datetime(morning)
+            .expect("should guess date"),
+            DateTime::parse_from_rfc3339("2022-10-15T01:57:00Z").unwrap()
+        );
+        assert_eq!(
+            APRSTimestamp::DHM(DHM {
+                day: 31,
+                time: NaiveTime::from_hms(23, 56, 0),
+                utc: true
+            })
+            .guess_datetime("2022-02-01T01:00:00Z".parse().unwrap())
+            .expect("should guess date"),
+            DateTime::parse_from_rfc3339("2022-01-31T23:56:00Z").unwrap()
+        );
     }
 }
