@@ -1,0 +1,81 @@
+aprs_report = ${ header ~ aprs_information_field }
+header = ${ origin ~ ">" ~ source ~ ":" }
+origin = { callsign }
+source = ${ source_field ~ ( "," ~ source_field )* }
+callsign = { (ASCII_ALPHANUMERIC | "_" | "-")+ }
+source_field = { (callsign | "*")+ }
+aprs_information_field = _{ position_report }
+
+// Position report
+position_report = { position_report_with_timestamp | position_report_without_timestamp }
+position_report_with_timestamp = ${ ("/" | "@") ~ (time_hms | time_dhm) ~ position_report_body }
+position_report_without_timestamp = ${ ("!" | "=") ~ position_report_body }
+position_report_body = ${ (latitude_longitude_symbol ~ position_report_data_extension? | compressed_location_and_symbol) ~ comment }
+position_report_data_extension = { course_speed | phg | radio_range | dfs_signal_strength }
+course_speed = ${ course ~ "/" ~ speed }
+course = { null_three_digits | digit{3} }
+speed = { null_three_digits | digit{3} }
+null_three_digits = { "000" | "..." | "   " }
+phg = @{ "PHG" ~ digit{4} }
+radio_range = @{ "RNG" ~ digit{4} }
+dfs_signal_strength = @{ "DFS" ~ digit{4} }
+
+// Comment
+comment = { comment_field+ }
+comment_field = {
+    altitude
+    | position_precision_enhancement
+    | id
+    | rotation_rate
+    | flight_level
+    | unknown_comment }
+altitude = ${ "/A=" ~ digit{6} }
+position_precision_enhancement = ${ "!W" ~ digit{2} ~ "!" }
+id = ${ "id" ~ ASCII_ALPHANUMERIC{8} }
+climb_rate = ${ number ~ "fpm" }
+rotation_rate = ${ number ~ "rot" }
+flight_level = ${ "FL" ~ number }
+unknown_comment = @{ non_whitespace+ }
+
+// Time
+time_dhm = @{ digit{6} ~ ("z" | "/") }
+time_hms = @{ digit{6} ~ "h" }
+time_mdhm = @{ digit{8} }
+
+// Location
+location = { latitude_longitude_symbol | maidenhead_locator }
+latitude_longitude_symbol = ${ latitude ~ symbol_table_id ~ longitude ~ symbol_code }
+compressed_location_and_symbol = ${ symbol_table_id ~ compressed_lat_or_lon{2} ~ symbol_code ~ csT }
+csT = ${ (compressed_radio_range | compressed_course_track) ~ compression_type }
+compressed_radio_range = { "{" ~ base_91_char }
+compressed_course_track = @{ base_91_char{2} }
+compression_type = { ASCII }
+compressed_lat_or_lon = @{ base_91_char{4} }
+latitude =  @{ digit{2} ~ ((digit{2} ~ "." ~ possibly_ambiguous_digit_pair) | (ambiguous_digit_pair ~ "." ~ space{2})) ~ latitude_bearing }
+latitude_bearing = { "N" | "S" }
+longitude = @{ digit{3} ~ ((digit{2} ~ "." ~ possibly_ambiguous_digit_pair) | (ambiguous_digit_pair ~ "." ~ space{2})) ~ longitude_bearing }
+longitude_bearing = { "E" | "W" }
+possibly_ambiguous_digit_pair = _{ digit{2} | ambiguous_digit_pair }
+ambiguous_digit_pair = _{ (digit ~ space) | space{2} }
+
+maidenhead_locator = ${ maidenhead_coordinate ~ aprs_symbol }
+maidenhead_coordinate = ${ letter{2} ~ digit{2} ~ letter{2} ~ digit{0,2} }
+
+aprs_symbol = _{ symbol_table_id ~ symbol_code }
+symbol_table_id = { "/" | "\\" | symbol_table_overlay_id }
+symbol_table_overlay_id = _{ ASCII_ALPHANUMERIC }
+symbol_code = { ASCII }
+
+// Basic
+letter = _{ ASCII_ALPHA }
+digit = _{ ASCII_DIGIT }
+space = { " " }
+base_91_char = { '!' .. '/' }
+// TODO Rationalize
+number_with_sign = @{ sign ~ number }
+number = @{ digit+ ~ ( "." ~ integer )? }
+sign = {"+" | "-"}
+integer = { digit+ }
+float = @{ integer ~ "." ~ integer }
+WHITESPACE = _{ " " }
+non_whitespace = _{ !WHITESPACE ~ ANY }

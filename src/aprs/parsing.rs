@@ -1,114 +1,212 @@
-use anyhow::Result;
+use anyhow::{format_err, Context, Result};
 use chrono::{DateTime, NaiveTime, Utc};
+use dms_coordinates::{Bearing, DMS};
 use itertools::Itertools;
-use pest::{
-    iterators::Pair,
-    Parser,
-};
+use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
-use super::Report;
+
+use super::{
+    Comment, PositionReport, PositionReportCoordinates, PositionReportDataExtension,
+    PositionReportTime, Report, Symbol, DHM,
+};
 
 #[derive(Parser)]
-#[grammar="aprs/aprs.pest"]
-pub struct APRSParser {
-    now: DateTime<Utc>,
-}
+#[grammar = "aprs/aprs_v2.pest"]
+pub struct APRSParser;
 
 impl APRSParser {
-    pub fn new(now: DateTime<Utc>) -> APRSParser {
-        APRSParser {
-            now,
-        }
-    }
-
     pub fn parse(&self, s: &str) -> Result<Report> {
-        let aprs_ast = <Self as Parser<Rule>>::parse(Rule::aprs_record, s)?
-            .next().unwrap();
+        let aprs_ast = <Self as Parser<Rule>>::parse(Rule::aprs_report, s)?
+            .next()
+            .unwrap();
 
         let mut rules = aprs_ast.into_inner();
-        let mut report = self.parse_aprs_report(rules.next().unwrap())?;
-        if let Some(comments) = rules.next() {
-            Self::parse_comments(comments, &mut report);
-        }
-
-        Ok(report)
+        let _header = rules.next().unwrap();
+        Self::parse_information_field(rules.next().unwrap())
     }
 
-    fn parse_aprs_report(&self, rule: Pair<Rule>) -> Result<Report> {
-        let mut pairs = rule.into_inner();
-        let _sender = pairs.next().unwrap().as_str();
-        let _receiver = pairs.next().unwrap().as_str();
-        let time = pairs.next().unwrap().as_str();
-        let coords = pairs.next().unwrap();
+    fn parse_information_field(information_field_ast: Pair<Rule>) -> Result<Report> {
+        match information_field_ast.as_rule() {
+            Rule::position_report => {
+                Self::parse_position_report(information_field_ast.into_inner().next().unwrap())
+                    .map(|r| Report::PositionReport(r))
+            }
+            _ => unreachable!(),
+        }
+    }
 
-        let time = self.parse_datetime(time)?;
-        let (coordinates, symbol) = Self::parse_coords_and_symbol(coords)?;
-        let track = pairs.next().unwrap().as_str().parse()?;
-        let speed = pairs.next().unwrap().as_str().parse()?;
-        let altitude = Self::parse_altitude(pairs.next().unwrap())?;
+    fn parse_position_report(pair: Pair<Rule>) -> Result<PositionReport> {
+        let rule_type = pair.as_rule();
+        let mut inner = pair.into_inner();
+        let timestamp = if let Rule::position_report_with_timestamp = rule_type {
+            Some(Self::parse_timestamp(inner.next().unwrap())?)
+        } else {
+            None
+        };
 
-        Ok(Report {
-            time,
-            coordinates,
+        let body = inner.next().unwrap();
+        let (symbol, position, data_extension) = Self::parse_position_report_body(body)?;
+        let comments = if let Some(comments_ast) = inner.next() {
+            Self::parse_comments(comments_ast)?
+        } else {
+            vec![]
+        };
+
+        Ok(PositionReport {
+            timestamp,
             symbol,
-            track,
-            speed,
-            altitude,
-            .. Default::default()
+            position,
+            data_extension,
+            comments,
         })
     }
 
-    fn parse_coords_and_symbol(pair: Pair<Rule>) -> Result<(geo::Point, [char; 2])> {
-        use dms_coordinates::{Bearing, DMS};
-
-        let mut pairs = pair.into_inner();
-        let mut latitude = pairs.next().unwrap().into_inner();
-        let symbol_1 = pairs.next().unwrap().as_str().chars().next().unwrap();
-        let mut longitude = pairs.next().unwrap().into_inner();
-        let symbol_2 = pairs.next().unwrap().as_str().chars().next().unwrap();
-
-        let latitude = {
-            let latitude_number = latitude.next().unwrap();
-            let latitude_bearing = latitude.next().unwrap();
-            let (degrees_str, minutes_seconds_str) = latitude_number.as_str().split_at(2);
-            let (minutes_str, seconds_str) = minutes_seconds_str.splitn(2, ".").collect_tuple().unwrap();
-            let bearing_str = latitude_bearing.as_str();
-            DMS::new(degrees_str.parse()?,
-                     minutes_str.parse()?,
-                     seconds_str.parse()?,
-                     if bearing_str == "N" { Bearing::North } else { Bearing::South }
-            ).to_decimal_degrees()
-        };
-        let longitude = {
-            let longitude_number = longitude.next().unwrap();
-            let longitude_bearing = longitude.next().unwrap();
-            let (degrees_str, minutes_seconds_str) = longitude_number.as_str().split_at(3);
-            let (minutes_str, seconds_str) = minutes_seconds_str.splitn(2, ".").collect_tuple().unwrap();
-            let bearing_str = longitude_bearing.as_str();
-            DMS::new(degrees_str.parse()?,
-                     minutes_str.parse()?,
-                     seconds_str.parse()?,
-                     if bearing_str == "E" { Bearing::East } else { Bearing::West }
-            ).to_decimal_degrees()
-        };
-
-        Ok((geo::Point((longitude, latitude).into()), [symbol_1, symbol_2]))
+    fn parse_timestamp(pair: Pair<Rule>) -> Result<PositionReportTime> {
+        match pair.as_rule() {
+            Rule::time_hms => {
+                let digits = &pair.as_str()[0..6];
+                let hour = (&digits[0..2]).parse().context("invalid hour")?;
+                let minutes = (&digits[2..4]).parse().context("invalid minutes")?;
+                let seconds = (&digits[4..6]).parse().context("invalid seconds")?;
+                Ok(PositionReportTime::HMS(NaiveTime::from_hms(
+                    hour, minutes, seconds,
+                )))
+            }
+            Rule::time_dhm => {
+                let digits = &pair.as_str()[0..6];
+                let timezone_indicator = pair.as_str().chars().nth(6).unwrap();
+                let day = (&digits[0..2]).parse().context("invalid day")?;
+                let hour = (&digits[2..4]).parse().context("invalid hour")?;
+                let minutes = (&digits[4..6]).parse().context("invalid minutes")?;
+                Ok(PositionReportTime::DHM(DHM::new(
+                    day,
+                    hour,
+                    minutes,
+                    timezone_indicator == 'z',
+                )))
+            }
+            _ => unreachable!(),
+        }
     }
 
-    fn parse_datetime(&self, time_str: &str) -> chrono::ParseResult<DateTime<Utc>> {
-        Self::parse_datetime_with_now(time_str, self.now)
+    fn parse_position_report_body(
+        pair: Pair<Rule>,
+    ) -> Result<(
+        Symbol,
+        PositionReportCoordinates,
+        Option<PositionReportDataExtension>,
+    )> {
+        let mut inner = pair.into_inner();
+        let coordinates_ast = inner.next().unwrap();
+        match coordinates_ast.as_rule() {
+            Rule::latitude_longitude_symbol => {
+                let (coords, symbol) = Self::parse_coords_and_symbol(coordinates_ast)?;
+                let has_data_extension = inner
+                    .peek()
+                    .map(|p| p.as_rule() == Rule::position_report_data_extension)
+                    .unwrap_or(false);
+                let data_extension = if has_data_extension {
+                    Some(Self::parse_position_report_data_extension(
+                        inner.next().unwrap().into_inner().next().unwrap(),
+                    )?)
+                } else {
+                    None
+                };
+                Ok((symbol, coords, data_extension))
+            }
+            Rule::compressed_location_and_symbol => {
+                todo!()
+            }
+            _ => unreachable!(),
+        }
     }
 
-    fn parse_datetime_with_now(time_str: &str, now: DateTime<Utc>) -> chrono::ParseResult<DateTime<Utc>> {
-        let time = NaiveTime::parse_from_str(time_str, "%H%M%S")?;
+    fn parse_coords_and_symbol(pair: Pair<Rule>) -> Result<(PositionReportCoordinates, [u8; 2])> {
+        let mut inner = pair.into_inner();
+        let latitude_str = inner.next().unwrap().as_str();
+        let symbol_1 = inner.next().unwrap().as_str().bytes().next().unwrap();
+        let longitude_str = inner.next().unwrap().as_str();
+        let symbol_2 = inner.next().unwrap().as_str().bytes().next().unwrap();
 
-        Ok(Self::guess_date(time, now))
+        let (latitude, lat_digits) = Self::parse_latlon_number(latitude_str)?;
+        let (longitude, lon_digits) = Self::parse_latlon_number(longitude_str)?;
+
+        Ok((
+            PositionReportCoordinates {
+                point: geo::Point((longitude, latitude).into()),
+                lat_digits,
+                lon_digits,
+            },
+            [symbol_1, symbol_2],
+        ))
+    }
+
+    /// Given a potentially ambiguous coordinate, such as "420 .  S" return the number and
+    /// the number of digits.
+    fn parse_latlon_number(s: &str) -> Result<(f64, u8)> {
+        let (before_dot, after_dot) = s
+            .splitn(2, '.')
+            .collect_tuple()
+            .ok_or(format_err!("invalid coordinate: \"{}\"", s))?;
+        let (degrees_str, minutes_str) =
+            before_dot.split_at(if before_dot.len() == 5 { 3 } else { 2 });
+        let (seconds_str, bearing) = after_dot.split_at(2);
+        let degrees = degrees_str.parse()?;
+        let (minutes, n_digits_minutes) = Self::parse_ambiguous_number_pair(minutes_str)?;
+        let (seconds, n_digits_seconds) = Self::parse_ambiguous_number_pair(seconds_str)?;
+        let bearing = match bearing {
+            "N" => Bearing::North,
+            "E" => Bearing::East,
+            "S" => Bearing::South,
+            "W" => Bearing::West,
+            _ => return Err(format_err!("invalid coordinate bearing: {}", s)),
+        };
+        Ok((
+            DMS::new(degrees, minutes, seconds as _, bearing).to_decimal_degrees(),
+            n_digits_minutes + n_digits_seconds,
+        ))
+    }
+
+    fn parse_ambiguous_number_pair(s: &str) -> Result<(i32, u8)> {
+        match s {
+            "  " => Ok((0, 0)),
+            ambiguous if ambiguous.ends_with(' ') => (&ambiguous[0..1])
+                .parse()
+                .map(|n: i32| (n * 10, 1))
+                .map_err(Into::into),
+            s => s.parse().map(|n| (n, 2)).map_err(Into::into),
+        }
+    }
+
+    fn parse_position_report_data_extension(
+        pair: Pair<Rule>,
+    ) -> Result<PositionReportDataExtension> {
+        match pair.as_rule() {
+            Rule::course_speed => {
+                let (course_ast, speed_ast) = pair.into_inner().collect_tuple().unwrap();
+                let course = if let Rule::null_three_digits = course_ast.as_rule() {
+                    0
+                } else {
+                    course_ast.as_str().parse()?
+                };
+                let speed = if let Rule::null_three_digits = speed_ast.as_rule() {
+                    0
+                } else {
+                    speed_ast.as_str().parse()?
+                };
+                Ok(PositionReportDataExtension::CourseSpeed { course, speed })
+            }
+            Rule::phg | Rule::radio_range | Rule::dfs_signal_strength => todo!(),
+            _ => {
+                dbg!(pair);
+                unreachable!()
+            }
+        }
     }
 
     /// Find the closest datetime between today, yesterday and tomorrow
     fn guess_date(time: NaiveTime, now: DateTime<Utc>) -> DateTime<Utc> {
-        let datetime = now.date().and_time(time)
-            .expect("date should be valid");
+        let datetime = now.date().and_time(time).expect("date should be valid");
 
         let one_day = chrono::Duration::days(1);
         let time_from_now = (now - datetime).num_seconds().abs();
@@ -128,39 +226,21 @@ impl APRSParser {
             if reference == "A" {
                 Ok(altitude_str.parse()?)
             } else {
-                Err(anyhow::format_err!("Unknown altitude format {}", pair.as_str()))
+                Err(format_err!(
+                    "Unknown altitude format {}",
+                    pair.as_str()
+                ))
             }
         } else {
-            Err(anyhow::format_err!("Unknown altitude format {}", pair.as_str()))
+            Err(format_err!(
+                "Unknown altitude format {}",
+                pair.as_str()
+            ))
         }
     }
 
-    fn parse_comments(pair: Pair<Rule>, report: &mut Report) {
-        for rule in pair.into_inner() {
-            match rule.as_rule() {
-                Rule::id => {
-                    if let Ok(aircraft_id) = Self::parse_aircraft_id(rule) {
-                        report.aircraft_id.replace(aircraft_id);
-                    }
-                },
-                Rule::climb_rate => {
-                    if let Ok(climb_rate) = rule.into_inner().next().unwrap().as_str().parse() {
-                        report.climb_rate.replace(climb_rate);
-                    }
-                },
-                Rule::turning_rate => {
-                    if let Ok(climb_rate) = rule.into_inner().next().unwrap().as_str().parse() {
-                        report.turning_rate.replace(climb_rate);
-                    }
-                },
-                Rule::flight_level => {
-                    if let Ok(flight_level) = rule.into_inner().next().unwrap().as_str().parse() {
-                        report.flight_level.replace(flight_level);
-                    }
-                },
-                _ => (),
-            }
-        }
+    fn parse_comments(pair: Pair<Rule>) -> Result<Vec<Comment>> {
+        todo!()
     }
 
     fn parse_aircraft_id(pair: Pair<Rule>) -> Result<u32> {
@@ -168,34 +248,60 @@ impl APRSParser {
     }
 }
 
-impl Default for APRSParser {
-    fn default() -> Self {
-        APRSParser::new(Utc::now())
-    }
-}
-
 #[cfg(test)]
 mod test {
+    use super::*;
+    use crate::aprs::PositionReportTime;
     use chrono::NaiveDate;
     use dms_coordinates::{Bearing, DMS};
-    use super::*;
 
     #[test]
     fn test_parse_example_01() {
-        let parser = APRSParser::new("2022-10-16 16:00:00Z".parse().unwrap());
-        let report: Report = parser.parse("OGN123456>OGNAPP:/123456h5123.45N/00123.45W'180/025/A=001000 !W66! id07123456 -100fpm +1.0rot FL011.00 gps4x5")
+        let report: Report = "OGN123456>OGNAPP:/123456h5123.45N/00123.45W'180/025/A=001000 !W66! id07123456 -100fpm +1.0rot FL011.00 gps4x5".parse()
             .expect("should have parsed");
-        assert_eq!(report.time, "2022-10-16 12:34:56Z".parse::<DateTime<Utc>>().unwrap());
-        assert_eq!(report.coordinates.y(), DMS::new(51, 23, 45.0, Bearing::North).to_decimal_degrees());
-        assert_eq!(report.coordinates.x(), DMS::new(1, 23, 45.0, Bearing::West).to_decimal_degrees());
-        assert_eq!(report.track, 180.);
-        assert_eq!(report.speed, 25.);
-        assert_eq!(report.altitude, 1000.);
-        assert_eq!(report.aircraft_id, Some(7123456));
-        assert_eq!(report.climb_rate, Some(-100.));
-        assert_eq!(report.turning_rate, Some(1.));
-        assert_eq!(report.flight_level, Some(11.));
-        assert_eq!(report.symbol, ['/', '\'']);
+
+        #[allow(irrefutable_let_patterns)]
+        if let Report::PositionReport(report) = report {
+            assert_eq!(
+                report.timestamp,
+                Some(PositionReportTime::HMS("12:34:56".parse().unwrap()))
+            );
+            assert_eq!(report.symbol, [b'/', b'\'']);
+            assert_eq!(
+                report.point().y(),
+                DMS::new(51, 23, 45.0, Bearing::North).to_decimal_degrees()
+            );
+            assert_eq!(
+                report.point().x(),
+                DMS::new(1, 23, 45.0, Bearing::West).to_decimal_degrees()
+            );
+            assert_eq!(report.course(), Some(180));
+            assert_eq!(report.speed(), Some(25.0));
+            /*            assert_eq!(report.track, 180.);
+                        assert_eq!(report.speed, 25.);
+                        assert_eq!(report.altitude, 1000.);
+                        assert_eq!(report.aircraft_id, Some(7123456));
+                        assert_eq!(report.climb_rate, Some(-100.));
+                        assert_eq!(report.turning_rate, Some(1.));
+                        assert_eq!(report.flight_level, Some(11.));
+            */
+        }
+    }
+
+    #[test]
+    fn test_parse_ambiguous_number() {
+        assert_eq!(
+            APRSParser::parse_ambiguous_number_pair("  ").expect("should parse"),
+            (0, 0)
+        );
+        assert_eq!(
+            APRSParser::parse_ambiguous_number_pair("8 ").expect("should parse"),
+            (80, 1)
+        );
+        assert_eq!(
+            APRSParser::parse_ambiguous_number_pair("82").expect("should parse"),
+            (82, 2)
+        );
     }
 
     #[test]
@@ -204,13 +310,21 @@ mod test {
         let morning = DateTime::from_utc(today.and_time(NaiveTime::from_hms(2, 0, 0)), Utc);
         let evening = DateTime::<Utc>::from_utc(today.and_time(NaiveTime::from_hms(22, 0, 0)), Utc);
 
-        assert_eq!(APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), morning).date_naive(),
-                   NaiveDate::from_ymd(2022, 10, 16));
-        assert_eq!(APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), morning).date_naive(),
-                   NaiveDate::from_ymd(2022, 10, 15));
-        assert_eq!(APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), evening).date_naive(),
-                   NaiveDate::from_ymd(2022, 10, 17));
-        assert_eq!(APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), evening).date_naive(),
-                   NaiveDate::from_ymd(2022, 10, 16));
+        assert_eq!(
+            APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), morning).date_naive(),
+            NaiveDate::from_ymd(2022, 10, 16)
+        );
+        assert_eq!(
+            APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), morning).date_naive(),
+            NaiveDate::from_ymd(2022, 10, 15)
+        );
+        assert_eq!(
+            APRSParser::guess_date(NaiveTime::from_hms(1, 58, 0), evening).date_naive(),
+            NaiveDate::from_ymd(2022, 10, 17)
+        );
+        assert_eq!(
+            APRSParser::guess_date(NaiveTime::from_hms(23, 0, 0), evening).date_naive(),
+            NaiveDate::from_ymd(2022, 10, 16)
+        );
     }
 }

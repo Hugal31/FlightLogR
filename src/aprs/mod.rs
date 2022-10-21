@@ -1,61 +1,27 @@
-use std::str::FromStr;
-
-use chrono::{DateTime, Utc};
-use quantities::{
-    duration::{HOUR, MINUTE},
-    length::{MILE, FOOT, Length},
-    speed::{Speed},
+use std::{
+    fmt::{self, Display, Formatter, Write},
+    str::FromStr,
+    time::Duration,
 };
 
-type Point = geo::Point<f64>;
+use chrono::{NaiveTime, Timelike};
+use dms_coordinates::DMS;
 
-mod parsing;
+pub mod parsing;
 
-pub fn nautical_mile() -> Length {
-    1.151 * MILE
+pub type Point = geo::Point<f64>;
+pub type Symbol = [u8; 2];
+
+#[derive(Clone, Debug)]
+pub enum Report {
+    PositionReport(PositionReport),
 }
 
-pub fn knots() -> Speed {
-    nautical_mile() / (1.0 * HOUR)
-}
-
-#[derive(Debug, Default)]
-pub struct Report {
-    pub time: DateTime<Utc>,
-    /// Geo location of the record
-    pub coordinates: Point,
-    pub symbol: [char; 2],
-    /// Ground track in degrees
-    pub track: f64,
-    /// Ground speed in knots
-    pub speed: f64,
-    /// Altitude AMSL in feet
-    pub altitude: f64,
-    pub aircraft_id: Option<u32>,
-    /// Flight level, i.e. altitude at 1013.25 hpa in hundreds of feet.
-    pub flight_level: Option<f64>,
-    /// Vertical speed in feet/m,
-    pub climb_rate: Option<f64>,
-    /// Turning rate in degrees/min
-    pub turning_rate: Option<f64>,
-}
-
-#[cfg(feature="quantities")]
-impl Report {
-    pub fn get_altitude(&self) -> Length {
-        self.altitude * FOOT
-    }
-
-    pub fn get_speed(&self) -> Speed {
-        self.speed * knots()
-    }
-
-    pub fn get_flight_level(&self) -> Option<Length> {
-        self.flight_level.map(|fl| fl * 100.0 * FOOT)
-    }
-
-    pub fn get_climb_rate(&self) -> Option<Speed> {
-        self.climb_rate.map(|cr| cr * FOOT / (1. * MINUTE))
+impl Display for Report {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PositionReport(report) => Display::fmt(report, f),
+        }
     }
 }
 
@@ -63,28 +29,472 @@ impl FromStr for Report {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        parsing::APRSParser::default().parse(s)
+        parsing::APRSParser.parse(s)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PositionReport {
+    pub timestamp: Option<PositionReportTime>,
+    pub symbol: Symbol,
+    pub position: PositionReportCoordinates,
+    pub data_extension: Option<PositionReportDataExtension>,
+    pub comments: Vec<Comment>,
+}
+
+impl PositionReport {
+    // Maybe store the enhanced value?
+    pub fn point(&self) -> Point {
+        if let Some((lat, lon)) = self.position_precision_enhancement() {
+            let original_lat = DMS::from_decimal_degrees(self.position.point.y(), true);
+            let original_lon = DMS::from_decimal_degrees(self.position.point.x(), false);
+            let enhanced_lat = DMS::new(
+                original_lat.degrees,
+                original_lat.minutes,
+                original_lat.seconds + (lat as f64 / 10.),
+                original_lat.bearing,
+            );
+            let enhanced_lon = DMS::new(
+                original_lon.degrees,
+                original_lon.minutes,
+                original_lon.seconds + (lon as f64 / 10.),
+                original_lon.bearing,
+            );
+
+            geo::Point(
+                (
+                    enhanced_lon.to_decimal_degrees(),
+                    enhanced_lat.to_decimal_degrees(),
+                )
+                    .into(),
+            )
+        } else {
+            self.position.point
+        }
+    }
+
+    pub fn course(&self) -> Option<u32> {
+        self.data_extension.as_ref().and_then(|de| de.course())
+    }
+
+    pub fn speed(&self) -> Option<f32> {
+        self.data_extension.as_ref().and_then(|de| de.speed())
+    }
+
+    pub fn altitude(&self) -> Option<f64> {
+        self.comments
+            .iter()
+            .filter_map(|c| match c {
+                &Comment::Altitude(f) => Some(f),
+                _ => None,
+            })
+            .next()
+    }
+
+    pub fn position_precision_enhancement(&self) -> Option<(u8, u8)> {
+        self.comments
+            .iter()
+            .filter_map(|c| match c {
+                &Comment::PositionPrecisionEnhancement { lat, lon } => Some((lat, lon)),
+                _ => None,
+            })
+            .next()
+    }
+}
+
+impl Display for PositionReport {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(timestamp) = &self.timestamp {
+            Display::fmt(timestamp, f)?;
+        }
+
+        match &self.data_extension {
+            Some(PositionReportDataExtension::CompressedData { .. }) => {
+                f.write_char(self.symbol[0] as _)?;
+                self.position.format_compressed(f)?;
+                f.write_char(self.symbol[1] as _)?;
+            }
+            _ => {
+                PositionReportCoordinates::format_lat(self.position.point.y(), f)?;
+                f.write_char(self.symbol[0] as _)?;
+                PositionReportCoordinates::format_lon(self.position.point.x(), f)?;
+                f.write_char(self.symbol[1] as _)?;
+            }
+        }
+        if let Some(de) = &self.data_extension {
+            Display::fmt(de, f)?;
+        }
+
+        let mut first = false;
+        for comment in &self.comments {
+            if first {
+                first = false;
+            } else {
+                f.write_char(' ')?;
+            }
+            Display::fmt(comment, f)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionReportTime {
+    HMS(NaiveTime),
+    DHM(DHM),
+}
+
+impl PositionReportTime {
+    pub fn precision(&self) -> Duration {
+        match self {
+            Self::HMS(_) => Duration::from_secs(1),
+            Self::DHM(_) => Duration::from_secs(60),
+        }
+    }
+}
+
+impl Display for PositionReportTime {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HMS(time) => write!(
+                f,
+                "{:02}{:02}{:02}h",
+                time.hour(),
+                time.minute(),
+                time.second()
+            ),
+            Self::DHM(dhm) => <DHM as Display>::fmt(dhm, f),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DHM {
+    pub day: u32,
+    pub time: NaiveTime,
+    pub utc: bool,
+}
+
+impl DHM {
+    pub fn new(day: u32, hour: u32, minute: u32, utc: bool) -> Self {
+        Self {
+            day,
+            time: NaiveTime::from_hms(hour, minute, 0),
+            utc,
+        }
+    }
+}
+
+impl Display for DHM {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let indicator = match self.utc {
+            true => 'z',
+            false => '/',
+        };
+
+        write!(
+            f,
+            "{:02}{:02}{:02}{}",
+            self.day,
+            self.time.hour(),
+            self.time.minute(),
+            indicator
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PositionReportCoordinates {
+    pub point: Point,
+    /// Number of given digits
+    pub lat_digits: u8,
+    pub lon_digits: u8,
+}
+
+impl PositionReportCoordinates {
+    pub fn from_point(point: Point) -> Self {
+        Self {
+            point,
+            lat_digits: 6,
+            lon_digits: 7,
+        }
+    }
+
+    fn format_lat(latitude: f64, f: &mut Formatter<'_>) -> fmt::Result {
+        let lat = DMS::from_decimal_degrees(latitude, true);
+        write!(
+            f,
+            "{:02}{:02}.{:02.0}{}",
+            lat.degrees, lat.minutes, lat.seconds, lat.bearing
+        )
+    }
+
+    fn format_lon(longitude: f64, f: &mut Formatter<'_>) -> fmt::Result {
+        let lon = DMS::from_decimal_degrees(longitude, false);
+        write!(
+            f,
+            "{:03}{:02}.{:02.0}{}",
+            lon.degrees, lon.minutes, lon.seconds, lon.bearing
+        )
+    }
+
+    fn format_compressed(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let lat = 380926. * (90. - self.point.y());
+        let lon = 190463. * (180. + self.point.x());
+        write!(f, "{:!>4}{:!>4}", Base91(lat as _), Base91(lon as _))
+    }
+}
+
+impl Display for PositionReportCoordinates {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Self::format_lat(self.point.y(), f)?;
+        Self::format_lon(self.point.x(), f)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct Base91(u32);
+
+impl Display for Base91 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut buff = String::with_capacity(5);
+        let mut n = self.0;
+        while n > 91 {
+            let d = n % 91;
+            buff.push((d as u8 + b'!') as _);
+            n = n / 91;
+        }
+        buff.push((n as u8 + b'!') as _);
+
+        let reversed: String = buff.chars().rev().collect();
+        f.pad_integral(true, "!", &reversed)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PositionReportDataExtension {
+    CourseSpeed {
+        /// If 0, invalid.
+        course: u32,
+        speed: u32,
+    },
+    PHG,
+    RadioRange,
+    DFSSignalStrength,
+    CompressedData {
+        cs: [u8; 2],
+        indicator: u8,
+    },
+}
+
+impl PositionReportDataExtension {
+    pub fn compressed_from_chars(chars: [u8; 3]) -> Self {
+        Self::CompressedData {
+            cs: [chars[0], chars[1]],
+            indicator: chars[2],
+        }
+    }
+
+    pub fn course(&self) -> Option<u32> {
+        match self {
+            Self::CourseSpeed { course, .. } if *course != 0 => Some(*course),
+            Self::CompressedData { cs, .. } if (b'!'..=b'z').contains(&cs[0]) => {
+                Some(((cs[0] - b'!') * 4) as _)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn speed(&self) -> Option<f32> {
+        match self {
+            Self::CourseSpeed { speed, .. } => Some(*speed as _),
+            Self::CompressedData { cs, .. } if (b'!'..=b'z').contains(&cs[0]) => {
+                Some(1.08f32.powi((cs[1] - b'!') as _) - 1.)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Display for PositionReportDataExtension {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CourseSpeed { course, speed } => write!(f, "{:03}/{:03}", course, speed),
+            Self::CompressedData { cs, indicator } => write!(
+                f,
+                "{}{}{}",
+                cs[0] as char, cs[1] as char, *indicator as char
+            ),
+            _ => todo!(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Comment {
+    /// Altitude AMSL in feet
+    Altitude(f64),
+    /// Third decimal digit to add to the seconds of lat and lon data.
+    PositionPrecisionEnhancement {
+        lat: u8,
+        lon: u8,
+    },
+    Id(String),
+    /// Flight level, i.e. altitude at 1013.25 hpa in hundreds of feet.
+    FlightLevel(f64),
+    /// Vertical speed in feet/m,
+    ClimbRate(f64),
+    /// Turning rate in degrees/min, positive is clockwise
+    TurningRate(f64),
+    Unknown(String),
+}
+
+impl Display for Comment {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Altitude(a) => write!(f, "/A={:06.0}", a),
+            Self::PositionPrecisionEnhancement { lat, lon } => write!(f, "!W{}{}!", lat, lon),
+            Self::Id(s) => f.write_str(&s),
+            Self::FlightLevel(fl) => write!(f, "FL{:03.2}", fl),
+            Self::ClimbRate(cr) => write!(f, "{:+.1}fpm", cr),
+            Self::TurningRate(tr) => write!(f, "{:+.1}rot", tr),
+            Self::Unknown(s) => f.write_str(s),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use dms_coordinates::Bearing;
+    use float_eq::assert_float_eq;
+    use geo::Point;
 
-    #[cfg(feature = "quantities")]
     #[test]
-    fn test_units() {
-        let report = Report {
-            altitude: 1000.0,
-            speed: 42.0,
-            climb_rate: Some(320.0),
-            flight_level: Some(330.0),
-            .. Default::default()
+    fn test_fmt_coordinates() {
+        assert_eq!(
+            PositionReportCoordinates::from_point(Point((123.765556, -12.582222).into()))
+                .to_string(),
+            "1234.56S12345.56E"
+        );
+    }
+
+    #[test]
+    fn test_fmt_comment() {
+        assert_eq!(Comment::Altitude(1020.0).to_string(), "/A=001020");
+        assert_eq!(
+            Comment::PositionPrecisionEnhancement { lat: 5, lon: 3 }.to_string(),
+            "!W53!"
+        );
+        assert_eq!(
+            Comment::Id("id02DF0A52".to_string()).to_string(),
+            "id02DF0A52"
+        );
+        assert_eq!(Comment::FlightLevel(320.0).to_string(), "FL320.00");
+        assert_eq!(Comment::ClimbRate(42.0).to_string(), "+42.0fpm");
+    }
+
+    #[test]
+    fn test_compressed_cst() {
+        assert_eq!(
+            PositionReportDataExtension::CourseSpeed {
+                course: 360,
+                speed: 0
+            }
+            .course(),
+            Some(360)
+        );
+        assert_eq!(
+            PositionReportDataExtension::CourseSpeed {
+                course: 360,
+                speed: 0
+            }
+            .speed(),
+            Some(0.)
+        );
+        assert_eq!(
+            PositionReportDataExtension::CourseSpeed {
+                course: 0,
+                speed: 0
+            }
+            .course(),
+            None
+        );
+
+        let example_compressed_cs =
+            PositionReportDataExtension::compressed_from_chars([b'7', b'P', b'!']);
+        assert_eq!(example_compressed_cs.course(), Some(88));
+        assert_eq!(
+            example_compressed_cs.speed().map(|f| (f * 10.) as u32),
+            Some(362)
+        );
+    }
+
+    #[test]
+    fn test_position_report_fmt() {
+        assert_eq!(
+            PositionReport {
+                timestamp: None,
+                symbol: [b'/', b'^'],
+                position: PositionReportCoordinates::from_point(Point(
+                    (123.765556, -12.582222).into()
+                )),
+                data_extension: Some(PositionReportDataExtension::CourseSpeed {
+                    course: 120,
+                    speed: 100
+                }),
+                comments: vec![],
+            }
+            .to_string(),
+            "1234.56S/12345.56E^120/100"
+        );
+        assert_eq!(
+            PositionReport {
+                timestamp: Some(PositionReportTime::HMS(NaiveTime::from_hms(3, 4, 56))),
+                symbol: [b'/', b'g'],
+                position: PositionReportCoordinates::from_point(Point((-72.75, 49.5).into())),
+                data_extension: Some(PositionReportDataExtension::CompressedData {
+                    cs: [b'7', b'P'],
+                    indicator: b'['
+                }),
+                comments: vec![],
+            }
+            .to_string(),
+            "030456h/5L!!<*e7g7P["
+        );
+    }
+
+    #[test]
+    fn test_format_base91() {
+        assert_eq!(Base91(0).to_string(), "!");
+        assert_eq!(Base91(1).to_string(), "\"");
+        assert_eq!(Base91(20427156).to_string(), "<*e7");
+        assert_eq!(format!("{:!>4}", Base91(2)), "!!!#");
+    }
+
+    #[test]
+    fn test_enhanced_coordinates() {
+        let original_lat = DMS::new(32, 12, 15.0, Bearing::South);
+        let expected_lat = DMS::new(32, 12, 15.5, Bearing::South);
+        let original_lon = DMS::new(140, 21, 3.0, Bearing::East);
+        let expected_lon = DMS::new(140, 21, 3.2, Bearing::East);
+        let report = PositionReport {
+            timestamp: None,
+            symbol: [b'/', b'g'],
+            position: PositionReportCoordinates::from_point(Point(
+                (
+                    original_lon.to_decimal_degrees(),
+                    original_lat.to_decimal_degrees(),
+                )
+                    .into(),
+            )),
+            data_extension: None,
+            comments: vec![Comment::PositionPrecisionEnhancement { lat: 5, lon: 2 }],
         };
 
-        assert_eq!(report.get_altitude(), 1000.0 * FOOT);
-        assert_eq!(report.get_speed(), 42.0 * nautical_mile() / (1.0 * HOUR));
-        assert_eq!(report.get_flight_level(), Some(33000.0 * FOOT));
-        assert_eq!(report.get_climb_rate(), Some(320.0 * FOOT / (1.0 * MINUTE)));
+        let point = report.point();
+        assert_float_eq!(point.x(), expected_lon.to_decimal_degrees(), abs <= 1.0e-5);
+        assert_float_eq!(point.y(), expected_lat.to_decimal_degrees(), abs <= 1.0e-5);
     }
 }
