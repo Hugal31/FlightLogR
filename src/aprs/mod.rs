@@ -15,12 +15,14 @@ pub type Symbol = [u8; 2];
 #[derive(Clone, Debug)]
 pub enum Report {
     PositionReport(PositionReport),
+    StatusReport(StatusReport),
 }
 
 impl Display for Report {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::PositionReport(report) => Display::fmt(report, f),
+            Self::StatusReport(report) => Display::fmt(report, f),
         }
     }
 }
@@ -35,7 +37,7 @@ impl FromStr for Report {
 
 #[derive(Clone, Debug)]
 pub struct PositionReport {
-    pub timestamp: Option<PositionReportTime>,
+    pub timestamp: Option<APRSTimestamp>,
     pub symbol: Symbol,
     pub position: PositionReportCoordinates,
     pub data_extension: Option<PositionReportDataExtension>,
@@ -140,12 +142,12 @@ impl Display for PositionReport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PositionReportTime {
+pub enum APRSTimestamp {
     HMS(NaiveTime),
     DHM(DHM),
 }
 
-impl PositionReportTime {
+impl APRSTimestamp {
     pub fn precision(&self) -> Duration {
         match self {
             Self::HMS(_) => Duration::from_secs(1),
@@ -154,7 +156,7 @@ impl PositionReportTime {
     }
 }
 
-impl Display for PositionReportTime {
+impl Display for APRSTimestamp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::HMS(time) => write!(
@@ -364,6 +366,18 @@ impl Display for Comment {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct StatusReport {
+    pub timestamp: APRSTimestamp,
+    pub text: String,
+}
+
+impl Display for StatusReport {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.timestamp, self.text)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -388,7 +402,7 @@ mod test {
             "!W53!"
         );
         assert_eq!(
-            Comment::Id("id02DF0A52".to_string()).to_string(),
+            Comment::Id("02DF0A52".to_string()).to_string(),
             "id02DF0A52"
         );
         assert_eq!(Comment::FlightLevel(320.0).to_string(), "FL320.00");
@@ -451,7 +465,7 @@ mod test {
         );
         assert_eq!(
             PositionReport {
-                timestamp: Some(PositionReportTime::HMS(NaiveTime::from_hms(3, 4, 56))),
+                timestamp: Some(APRSTimestamp::HMS(NaiveTime::from_hms(3, 4, 56))),
                 symbol: [b'/', b'g'],
                 position: PositionReportCoordinates::from_point(Point((-72.75, 49.5).into())),
                 data_extension: Some(PositionReportDataExtension::CompressedData {

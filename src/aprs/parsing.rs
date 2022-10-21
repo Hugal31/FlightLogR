@@ -6,8 +6,8 @@ use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
 
 use super::{
-    Comment, PositionReport, PositionReportCoordinates, PositionReportDataExtension,
-    PositionReportTime, Report, Symbol, DHM,
+    APRSTimestamp, Comment, PositionReport, PositionReportCoordinates, PositionReportDataExtension,
+    Report, StatusReport, Symbol, DHM,
 };
 
 #[derive(Parser)]
@@ -30,6 +30,9 @@ impl APRSParser {
             Rule::position_report => {
                 Self::parse_position_report(information_field_ast.into_inner().next().unwrap())
                     .map(Report::PositionReport)
+            }
+            Rule::status_report => {
+                Self::parse_status_report(information_field_ast).map(Report::StatusReport)
             }
             _ => unreachable!(),
         }
@@ -61,14 +64,21 @@ impl APRSParser {
         })
     }
 
-    fn parse_timestamp(pair: Pair<Rule>) -> Result<PositionReportTime> {
+    fn parse_status_report(pair: Pair<Rule>) -> Result<StatusReport> {
+        let mut inner = pair.into_inner();
+        let timestamp = Self::parse_timestamp(inner.next().unwrap())?;
+        let text = inner.next().unwrap().as_str().to_owned();
+        Ok(StatusReport { timestamp, text })
+    }
+
+    fn parse_timestamp(pair: Pair<Rule>) -> Result<APRSTimestamp> {
         match pair.as_rule() {
             Rule::time_hms => {
                 let digits = &pair.as_str()[0..6];
                 let hour = (&digits[0..2]).parse().context("invalid hour")?;
                 let minutes = (&digits[2..4]).parse().context("invalid minutes")?;
                 let seconds = (&digits[4..6]).parse().context("invalid seconds")?;
-                Ok(PositionReportTime::HMS(NaiveTime::from_hms(
+                Ok(APRSTimestamp::HMS(NaiveTime::from_hms(
                     hour, minutes, seconds,
                 )))
             }
@@ -78,7 +88,7 @@ impl APRSParser {
                 let day = (&digits[0..2]).parse().context("invalid day")?;
                 let hour = (&digits[2..4]).parse().context("invalid hour")?;
                 let minutes = (&digits[4..6]).parse().context("invalid minutes")?;
-                Ok(PositionReportTime::DHM(DHM::new(
+                Ok(APRSTimestamp::DHM(DHM::new(
                     day,
                     hour,
                     minutes,
@@ -256,7 +266,8 @@ impl APRSParser {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::aprs::PositionReportTime;
+    use crate::aprs::APRSTimestamp;
+    use assert_matches::assert_matches;
     use chrono::NaiveDate;
     use dms_coordinates::{Bearing, DMS};
 
@@ -265,11 +276,10 @@ mod test {
         let report: Report = "OGN123456>OGNAPP:/123456h5123.45N/00123.45W'180/025/A=001000 !W65! id07123456 -100fpm +1.0rot FL011.00 gps4x5".parse()
             .expect("should have parsed");
 
-        #[allow(irrefutable_let_patterns)]
         if let Report::PositionReport(report) = report {
             assert_eq!(
                 report.timestamp,
-                Some(PositionReportTime::HMS("12:34:56".parse().unwrap()))
+                Some(APRSTimestamp::HMS("12:34:56".parse().unwrap()))
             );
             assert_eq!(report.symbol, [b'/', b'\'']);
             assert_eq!(
@@ -324,6 +334,24 @@ mod test {
                 }),
                 Some(11.0)
             );
+        } else {
+            panic!("It should be a position report")
+        }
+    }
+
+    #[test]
+    fn test_parse_status_report() {
+        let report_str = "Madruedan>OGNSDR,TCPIP*,qAC,GLIDERN3:>143915h v0.2.8.ARM CPU:1.2 RAM:575.7/971.1MB NTP:3.5ms/-4.0ppm +71.4C 0/0Acfts[1h] RF:+29+18.8ppm/+4.74dB";
+        let report: Report = report_str.parse().expect("should parse");
+        match report {
+            Report::StatusReport(report) => {
+                assert_eq!(
+                    report.timestamp,
+                    APRSTimestamp::HMS(NaiveTime::from_hms(14, 39, 15))
+                );
+                assert_eq!(report.text, " v0.2.8.ARM CPU:1.2 RAM:575.7/971.1MB NTP:3.5ms/-4.0ppm +71.4C 0/0Acfts[1h] RF:+29+18.8ppm/+4.74dB");
+            }
+            _ => panic!("expected a status report, got {:?}", report),
         }
     }
 

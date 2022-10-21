@@ -4,7 +4,7 @@ origin = { callsign }
 source = ${ source_field ~ ( "," ~ source_field )* }
 callsign = { (ASCII_ALPHANUMERIC | "_" | "-")+ }
 source_field = { (callsign | "*")+ }
-aprs_information_field = _{ position_report }
+aprs_information_field = _{ position_report | status_report }
 
 // Position report
 position_report = { position_report_with_timestamp | position_report_without_timestamp }
@@ -20,8 +20,13 @@ phg = @{ "PHG" ~ digit{4} }
 radio_range = @{ "RNG" ~ digit{4} }
 dfs_signal_strength = @{ "DFS" ~ digit{4} }
 
+// Status report
+// The spec only allows zulu DHM, but HMS has been seen in the wild.
+status_report = ${ ">" ~ (time_hms | time_dhm) ~ status_text }
+status_text = { ANY+ }
+
 // Comment
-comments = !{ comment_field+ }
+comments = !{ WHITESPACE* ~ comment_field+ }
 comment_field = _{
     altitude
     | position_precision_enhancement
