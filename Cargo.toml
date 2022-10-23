@@ -8,6 +8,7 @@ Listen for OGN APRS stream and log landing and takeoffs."""
 [dependencies]
 anyhow = "1.0.65"
 chrono = "0.4.22"
+csv = "1.1.6"
 dms-coordinates = "1.1"
 geo = "0.23"
 itertools = "0.10.5"
