@@ -249,7 +249,6 @@ impl APRSParser {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::aprs::APRSTimestamp;
     use dms_coordinates::{Bearing, DMS};
 
     #[test]
