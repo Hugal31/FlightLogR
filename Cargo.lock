@@ -400,6 +400,7 @@ dependencies = [
  "float_eq",
  "geo",
  "itertools",
+ "log",
  "pest",
  "pest_derive",
  "serde",

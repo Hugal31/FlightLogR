@@ -11,8 +11,10 @@ clap = { version =  "4", features = ["derive"] }
 chrono = "0.4.22"
 csv = "1.1.6"
 dms-coordinates = "1.1"
+env_logger = "0.5"
 geo = "0.23"
 itertools = "0.10.5"
+log = "0.4"
 pest = "2.4"
 pest_derive = "2.4"
 serde = { version = "1.0.147", features = ["derive"] }

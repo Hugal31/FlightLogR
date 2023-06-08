@@ -118,15 +118,25 @@ impl Config {
 
 fn main() -> Result<()> {
     let config = Config::parse();
+    init_logging();
     let report_stream = open_reports(config)?;
     for report in report_stream {
         match report {
-            Ok(r) => println!("{}", r),
-            Err(e) => eprintln!("could not parse report: {}", e),
+            Ok(r) => println!("{:?}", r),
+            Err(e) => log::warn!("could not parse report: {}", e),
         };
     }
 
     Ok(())
+}
+
+fn init_logging() {
+    let logging_env = "FLIGHTLOGR_LOG";
+    if std::env::var(logging_env).is_ok() {
+        env_logger::Builder::from_env(logging_env)
+            .try_init()
+            .expect("Failed to initialize logging")
+    }
 }
 
 fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
@@ -136,7 +146,7 @@ fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>
         file_uri if file_uri.starts_with("./") => open_report_file(&file_uri[2..]),
         url => {
             if config.filters.is_empty() {
-                eprintln!("WARNING: No filters declared.");
+                log::warn!("No filters declared.");
             }
             let stream = TcpStream::connect(url)?;
             let client = APRSClient::login(
