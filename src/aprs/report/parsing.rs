@@ -16,7 +16,7 @@ pub struct APRSParser;
 
 impl APRSParser {
     pub fn parse(&self, s: &str) -> Result<Report> {
-        let aprs_ast = <Self as Parser<Rule>>::parse(Rule::aprs_report, s)?
+        let aprs_ast = <Self as Parser<Rule>>::parse(Rule::aprs_report, s.trim())?
             .next()
             .unwrap();
 
