@@ -78,9 +78,10 @@ impl APRSParser {
                 let hour = (&digits[0..2]).parse().context("invalid hour")?;
                 let minutes = (&digits[2..4]).parse().context("invalid minutes")?;
                 let seconds = (&digits[4..6]).parse().context("invalid seconds")?;
-                Ok(APRSTimestamp::HMS(NaiveTime::from_hms(
-                    hour, minutes, seconds,
-                )))
+                Ok(APRSTimestamp::HMS(
+                    NaiveTime::from_hms_opt(hour, minutes, seconds)
+                        .ok_or_else(|| format_err!("Invalid date {hour} {minutes} {seconds}"))?,
+                ))
             }
             Rule::time_dhm => {
                 let digits = &pair.as_str()[0..6];
@@ -93,7 +94,7 @@ impl APRSParser {
                     hour,
                     minutes,
                     timezone_indicator == 'z',
-                )))
+                )?))
             }
             _ => unreachable!(),
         }
@@ -327,7 +328,7 @@ mod test {
             Report::StatusReport(report) => {
                 assert_eq!(
                     report.timestamp,
-                    APRSTimestamp::HMS(NaiveTime::from_hms(14, 39, 15))
+                    APRSTimestamp::HMS(NaiveTime::from_hms_opt(14, 39, 15).unwrap())
                 );
                 assert_eq!(report.text, " v0.2.8.ARM CPU:1.2 RAM:575.7/971.1MB NTP:3.5ms/-4.0ppm +71.4C 0/0Acfts[1h] RF:+29+18.8ppm/+4.74dB");
             }

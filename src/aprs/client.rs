@@ -78,21 +78,24 @@ pub struct APRSClient<R: Read> {
 }
 
 impl<RW: Read + Write> APRSClient<RW> {
-    pub fn login(mut stream: RW, creds: &Credentials, filters: &[Filter]) -> Result<Self> {
+    pub fn login(mut stream: RW, creds: &Credentials, filters: &[Filter], verify_login: bool) -> Result<Self> {
         login_to_aprs(&mut stream, creds, &filters)?;
         let mut buf_reader = BufReader::new(stream);
 
-        let mut line = String::new();
-        loop {
-            buf_reader.read_line(&mut line)?;
-            if line.starts_with('#') {
-                if line.starts_with("# aprs") {
-                    // Connexion comment
-                } else if line.starts_with("# logresp") && line.contains("unverified") {
-                    return Err(format_err!("invalid credentials: got response {}", line));
-                } else {
-                    // Any other comment, accept as logged in
-                    break;
+        if verify_login {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                buf_reader.read_line(&mut line)?;
+                if line.starts_with('#') {
+                    if line.starts_with("# aprs") {
+                        // Connexion comment
+                    } else if line.starts_with("# logresp") && line.contains("unverified") {
+                        return Err(format_err!("invalid credentials: got response \"{}\"", line));
+                    } else {
+                        // Any other comment, accept as logged in
+                        break;
+                    }
                 }
             }
         }
@@ -149,7 +152,7 @@ pub fn login_to_aprs<W: Write>(
         creds.user, creds.password, creds.app_name, creds.app_version
     )?;
     if !filters.is_empty() {
-        write!(stream, "filter")?;
+        write!(stream, " filter")?;
         for filter in filters {
             write!(stream, " {}", filter)?;
         }

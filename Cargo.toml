@@ -7,6 +7,7 @@ Listen for OGN APRS stream and log landing and takeoffs."""
 
 [dependencies]
 anyhow = "1.0.65"
+clap = { version =  "4", features = ["derive"] }
 chrono = "0.4.22"
 csv = "1.1.6"
 dms-coordinates = "1.1"
@@ -14,12 +15,11 @@ geo = "0.23"
 itertools = "0.10.5"
 pest = "2.4"
 pest_derive = "2.4"
-quantities = { version = "0.11", features=["duration", "length", "speed"], optional=true }
+serde = { version = "1.0.147", features = ["derive"] }
+# serde_derive = "1.0.147"
+toml = "0.5.9"
 
 [dev-dependencies]
 assert_matches = "1.5"
 float_eq = "1.0"
 socketpair = "0.16"
-
-[features]
-default = ["quantities"]
