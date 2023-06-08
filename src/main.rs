@@ -2,6 +2,7 @@ use flightlogr::ogn::OGN_APRS_URL;
 use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -131,16 +132,8 @@ fn main() -> Result<()> {
 fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
     match config.aprs_uri.as_str() {
         "-" => Ok(Box::new(Reports::new(std::io::stdin()))),
-        file_uri if file_uri.starts_with("file://") => {
-            let path = &file_uri[7..];
-            let stream = File::open(path)?;
-            Ok(Box::new(Reports::new(stream)))
-        }
-        file_uri if file_uri.starts_with("./") => {
-            let path = &file_uri[2..];
-            let stream = File::open(path)?;
-            Ok(Box::new(Reports::new(stream)))
-        }
+        file_uri if file_uri.starts_with("file://") => open_report_file(&file_uri[7..]),
+        file_uri if file_uri.starts_with("./") => open_report_file(&file_uri[2..]),
         url => {
             if config.filters.is_empty() {
                 eprintln!("WARNING: No filters declared.");
@@ -166,4 +159,22 @@ fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>
             Ok(Box::new(client.reports()))
         }
     }
+}
+
+#[cfg(unix)]
+fn open_report_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
+    use std::fs::metadata;
+    use std::os::unix::{fs::FileTypeExt, net::UnixStream};
+
+    let path = path.as_ref();
+    if metadata(path)?.file_type().is_socket() {
+        Ok(Box::new(Reports::new(UnixStream::connect(path)?)))
+    } else {
+        Ok(Box::new(Reports::new(File::open(path)?)))
+    }
+}
+
+#[cfg(not(unix))]
+fn open_report_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
+    Ok(Box::new(Reports::new(File::open(path)?)))
 }
