@@ -1,16 +1,19 @@
-use flightlogr::ogn::OGN_APRS_URL;
 use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use flightlogr::aprs::{
     client::{APRSClient, Credentials, Filter, FilterSpec, Reports},
     Report,
 };
 use serde::Deserialize;
+
+use flightlogr::events::{DateSource, EventDetector, FixedDateTimeSource, SystemDateTimeSource};
+use flightlogr::ogn::OGN_APRS_URL;
 
 /// Merged CLI arguments and config.
 #[derive(Clone, Debug, Deserialize, Parser)]
@@ -27,6 +30,9 @@ struct PartialConfig {
     config_file: Option<String>,
     #[clap(flatten)]
     filters: Option<FilterConfig>,
+    #[arg(long)]
+    #[serde(skip)]
+    now: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Parser)]
@@ -62,6 +68,7 @@ impl PartialConfig {
             aprs_user,
             aprs_password,
             filters,
+            now,
             ..
         } = self;
         Ok(Config {
@@ -80,6 +87,7 @@ impl PartialConfig {
                 })],
                 _ => vec![],
             },
+            now,
         })
     }
 }
@@ -90,6 +98,7 @@ struct Config {
     aprs_user: Option<String>,
     aprs_password: Option<String>,
     filters: Vec<Filter>,
+    now: Option<DateTime<Utc>>,
 }
 
 impl Config {
@@ -119,10 +128,19 @@ impl Config {
 fn main() -> Result<()> {
     let config = Config::parse();
     init_logging();
+    let datetime_source = if let Some(now) = config.now {
+        Box::new(FixedDateTimeSource(now)) as Box<dyn DateSource>
+    } else {
+        Box::new(SystemDateTimeSource) as Box<dyn DateSource>
+    };
     let report_stream = open_reports(config)?;
+    let mut event_detector = EventDetector::with_date_source(datetime_source);
     for report in report_stream {
         match report {
-            Ok(r) => println!("{:?}", r),
+            Ok(r) => {
+                //println!("{:?}", r);
+                event_detector.add_report(&r);
+            }
             Err(e) => log::warn!("could not parse report: {}", e),
         };
     }
