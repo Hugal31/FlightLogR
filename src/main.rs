@@ -66,8 +66,8 @@ impl PartialConfig {
         } = self;
         Ok(Config {
             aprs_uri: aprs_uri.unwrap_or_else(|| OGN_APRS_URL.to_owned()),
-            aprs_user: aprs_user,
-            aprs_password: aprs_password,
+            aprs_user,
+            aprs_password,
             filters: match filters.as_ref() {
                 Some(FilterConfig {
                     latitude: Some(latitude),
@@ -154,12 +154,10 @@ fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>
                 &Credentials {
                     user: config
                         .aprs_user
-                        .ok_or_else(|| anyhow!("missing APRS username"))?
-                        .to_string(),
+                        .ok_or_else(|| anyhow!("missing APRS username"))?,
                     password: config
                         .aprs_password
-                        .ok_or_else(|| anyhow!("missing APRS password"))?
-                        .to_string(),
+                        .ok_or_else(|| anyhow!("missing APRS password"))?,
                     app_name: "flightLGo".to_owned(), // env!("CARGO_PKG_NAME").to_owned(),
                     app_version: "0.0.0b1".to_string(), //, env!("CARGO_PKG_VERSION").to_owned(),
                 },

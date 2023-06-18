@@ -75,9 +75,9 @@ impl APRSParser {
         match pair.as_rule() {
             Rule::time_hms => {
                 let digits = &pair.as_str()[0..6];
-                let hour = (&digits[0..2]).parse().context("invalid hour")?;
-                let minutes = (&digits[2..4]).parse().context("invalid minutes")?;
-                let seconds = (&digits[4..6]).parse().context("invalid seconds")?;
+                let hour = digits[0..2].parse().context("invalid hour")?;
+                let minutes = digits[2..4].parse().context("invalid minutes")?;
+                let seconds = digits[4..6].parse().context("invalid seconds")?;
                 Ok(APRSTimestamp::HMS(
                     NaiveTime::from_hms_opt(hour, minutes, seconds)
                         .ok_or_else(|| format_err!("Invalid date {hour} {minutes} {seconds}"))?,
@@ -86,9 +86,9 @@ impl APRSParser {
             Rule::time_dhm => {
                 let digits = &pair.as_str()[0..6];
                 let timezone_indicator = pair.as_str().chars().nth(6).unwrap();
-                let day = (&digits[0..2]).parse().context("invalid day")?;
-                let hour = (&digits[2..4]).parse().context("invalid hour")?;
-                let minutes = (&digits[4..6]).parse().context("invalid minutes")?;
+                let day = digits[0..2].parse().context("invalid day")?;
+                let hour = digits[2..4].parse().context("invalid hour")?;
+                let minutes = digits[4..6].parse().context("invalid minutes")?;
                 Ok(APRSTimestamp::DHM(DHM::new(
                     day,
                     hour,
@@ -174,7 +174,7 @@ impl APRSParser {
     fn parse_ambiguous_number_pair(s: &str) -> Result<(i32, u8)> {
         match s {
             "  " => Ok((0, 0)),
-            ambiguous if ambiguous.ends_with(' ') => (&ambiguous[0..1])
+            ambiguous if ambiguous.ends_with(' ') => ambiguous[0..1]
                 .parse()
                 .map(|n: i32| (n * 10, 1))
                 .map_err(Into::into),
@@ -221,15 +221,15 @@ impl APRSParser {
 
     fn parse_comment(pair: Pair<Rule>) -> Result<Comment> {
         match pair.as_rule() {
-            Rule::altitude => (&pair.as_str()["/A=".len()..])
+            Rule::altitude => pair.as_str()["/A=".len()..]
                 .parse()
                 .map(Comment::Altitude)
                 .map_err(Into::into),
             Rule::position_precision_enhancement => {
                 let digits = &pair.as_str()[2..4];
                 Ok(Comment::PositionPrecisionEnhancement {
-                    lat: (&digits[0..1]).parse()?,
-                    lon: (&digits[1..2]).parse()?,
+                    lat: digits[0..1].parse()?,
+                    lon: digits[1..2].parse()?,
                 })
             }
             Rule::climb_rate => Ok(Comment::ClimbRate(
@@ -241,7 +241,7 @@ impl APRSParser {
             Rule::flight_level => Ok(Comment::FlightLevel(
                 (pair.into_inner().next().unwrap().as_str()).parse()?,
             )),
-            Rule::id => Ok(Comment::Id((&pair.as_str()[2..]).to_string())),
+            Rule::id => Ok(Comment::Id(pair.as_str()[2..].to_string())),
             _ => Ok(Comment::Unknown(pair.as_str().to_owned())),
         }
     }

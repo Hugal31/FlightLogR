@@ -63,6 +63,16 @@ pub struct PositionReport {
 }
 
 impl PositionReport {
+    pub fn id(&self) -> Option<String> {
+        self.comments
+            .iter()
+            .filter_map(|c| match c {
+                Comment::Id(id) => Some(id.clone()),
+                _ => None,
+            })
+            .next()
+    }
+
     // Maybe store the enhanced value?
     pub fn point(&self) -> Point {
         if let Some((lat, lon)) = self.position_precision_enhancement() {
@@ -179,7 +189,7 @@ impl APRSTimestamp {
             Self::DHM(DHM { day, time, utc }) => {
                 if utc {
                     let today = now.date_naive();
-                    let date = today.clone();
+                    let date = today;
                     match date.with_day(day) {
                         Some(d) if d <= today => Ok(d.and_time(time).and_utc()),
                         // Try last month
@@ -434,8 +444,8 @@ impl Display for StatusReport {
 /// Find the closest datetime between today, yesterday and tomorrow
 fn guess_date(time: NaiveTime, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
     let today = now.date_naive();
-    let yesterday = today.clone() - chrono::Duration::days(1);
-    let tomorrow = today.clone() + chrono::Duration::days(1);
+    let yesterday = today - chrono::Duration::days(1);
+    let tomorrow = today + chrono::Duration::days(1);
 
     let datetime_today = today.and_time(time);
     let datetime_tomorrow = tomorrow.and_time(time);
@@ -443,8 +453,8 @@ fn guess_date(time: NaiveTime, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
 
     let leeway = chrono::Duration::minutes(30);
 
-    let time_to_tomorrow = datetime_tomorrow.clone() - now.naive_utc();
-    let time_from_now = datetime_today.clone() - now.naive_utc();
+    let time_to_tomorrow = datetime_tomorrow - now.naive_utc();
+    let time_from_now = datetime_today - now.naive_utc();
     if time_to_tomorrow < leeway {
         // If datetime_tomorrow is in 30 minutes, accept it
         Ok(datetime_tomorrow.and_utc())

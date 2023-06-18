@@ -78,8 +78,13 @@ pub struct APRSClient<R: Read> {
 }
 
 impl<RW: Read + Write> APRSClient<RW> {
-    pub fn login(mut stream: RW, creds: &Credentials, filters: &[Filter], verify_login: bool) -> Result<Self> {
-        login_to_aprs(&mut stream, creds, &filters)?;
+    pub fn login(
+        mut stream: RW,
+        creds: &Credentials,
+        filters: &[Filter],
+        verify_login: bool,
+    ) -> Result<Self> {
+        login_to_aprs(&mut stream, creds, filters)?;
         let mut buf_reader = BufReader::new(stream);
 
         if verify_login {
@@ -91,7 +96,10 @@ impl<RW: Read + Write> APRSClient<RW> {
                     if line.starts_with("# aprs") {
                         // Connexion comment
                     } else if line.starts_with("# logresp") && line.contains("unverified") {
-                        return Err(format_err!("invalid credentials: got response \"{}\"", line));
+                        return Err(format_err!(
+                            "invalid credentials: got response \"{}\"",
+                            line
+                        ));
                     } else {
                         // Any other comment, accept as logged in
                         break;
@@ -157,7 +165,7 @@ pub fn login_to_aprs<W: Write>(
             write!(stream, " {}", filter)?;
         }
     }
-    write!(stream, "\n")?;
+    writeln!(stream)?;
     stream.flush()
 }
 
