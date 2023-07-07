@@ -30,6 +30,8 @@ struct PartialConfig {
     config_file: Option<String>,
     #[clap(flatten)]
     filters: Option<FilterConfig>,
+    #[clap(skip)]
+    firebase: Option<FirebaseConfig>,
     #[arg(long)]
     #[serde(skip)]
     now: Option<DateTime<Utc>>,
@@ -44,6 +46,12 @@ struct FilterConfig {
     /// Range in km.
     #[arg(long)]
     range: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FirebaseConfig {
+    api_key: String,
+    topic_id: String,
 }
 
 impl PartialConfig {
@@ -61,6 +69,9 @@ impl PartialConfig {
         if self.filters.is_none() {
             self.filters = other.filters
         }
+        if self.firebase.is_none() {
+            self.firebase = other.firebase;
+        }
     }
 
     pub fn complete(self) -> Result<Config> {
@@ -69,6 +80,7 @@ impl PartialConfig {
             aprs_user,
             aprs_password,
             filters,
+            firebase,
             now,
             ..
         } = self;
@@ -88,6 +100,7 @@ impl PartialConfig {
                 })],
                 _ => vec![],
             },
+            firebase,
             now,
         })
     }
@@ -99,6 +112,7 @@ struct Config {
     aprs_user: Option<String>,
     aprs_password: Option<String>,
     filters: Vec<Filter>,
+    firebase: Option<FirebaseConfig>,
     now: Option<DateTime<Utc>>,
 }
 
@@ -128,8 +142,19 @@ impl Config {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let config = Config::parse();
     init_logging();
+    let config = Config::parse();
+
+    if let Some(firebase_conf) = config.firebase {
+        let sender = flightlogr::notifications::FirebaseNotificationSender::new(firebase_conf.api_key, firebase_conf.topic_id);
+        sender.notify_event(&flightlogr::events::Event::AircraftChangedState(flightlogr::events::AircraftChangeStatedEvent {
+            aircraft_id: "F-CGTG".to_string(),
+            new_state: flightlogr::events::AircraftState::Airborne,
+            date: DateTime::default(),
+        })).await?;
+    }
+    return Ok(());
+
     let datetime_source = if let Some(now) = config.now {
         Box::new(FixedDateTimeSource(now)) as Box<dyn DateSource>
     } else {
@@ -166,6 +191,7 @@ async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Rep
         file_uri if file_uri.starts_with("file://") => open_report_file(&file_uri[7..]).await,
         file_uri if file_uri.starts_with("./") => open_report_file(&file_uri[2..]).await,
         url => {
+            log::debug!("Connecting to {url}");
             if config.filters.is_empty() {
                 log::warn!("No filters declared.");
             }
@@ -175,11 +201,9 @@ async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Rep
                     user: config
                         .aprs_user
                         .ok_or_else(|| anyhow!("missing APRS username"))?,
-                    password: config
-                        .aprs_password
-                        .ok_or_else(|| anyhow!("missing APRS password"))?,
-                    app_name: "flightLGo".to_owned(), // env!("CARGO_PKG_NAME").to_owned(),
-                    app_version: "0.0.0b1".to_string(), //, env!("CARGO_PKG_VERSION").to_owned(),
+                    password: config.aprs_password.unwrap_or_else(|| "-1".to_owned()),
+                    app_name: env!("CARGO_PKG_NAME").to_owned(),
+                    app_version: env!("CARGO_PKG_VERSION").to_owned(),
                 },
                 config.filters.clone(),
                 false,

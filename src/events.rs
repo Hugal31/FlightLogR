@@ -72,8 +72,8 @@ impl EventDetector {
                     status.reports.push_back(stamped_report);
                 }
                 if let Some((date, state)) = Self::detect_event(status) {
-                    if status.state != state {
-                        status.state = state;
+                    if status.state != Some(state) {
+                        status.state = Some(state);
                         log::info!("{date} Got event {state:?} at for {id}");
                     }
                 }
@@ -90,9 +90,7 @@ impl EventDetector {
         let ((state_before, beacons_before), (state_now, beacons_now)) =
             grouped_states.into_iter().tuple_windows().last()?;
 
-        if state_now == AircraftState::Unknown {
-            return None;
-        }
+        let state_now = state_now?;
 
         log::debug!("{state_now:?}");
 
@@ -102,7 +100,7 @@ impl EventDetector {
             return None;
         }
 
-        let first_timestamp = if state_before == AircraftState::Unknown {
+        let first_timestamp = if state_before.is_none() {
             beacons_before.first().unwrap().timestamp
         } else {
             first.timestamp
@@ -111,13 +109,13 @@ impl EventDetector {
         Some((first_timestamp, state_now))
     }
 
-    fn report_state(report: &Beacon) -> AircraftState {
+    fn report_state(report: &Beacon) -> Option<AircraftState> {
         if report.speed >= AIRBORNE_VEL {
-            AircraftState::Airborne
+            Some(AircraftState::Airborne)
         } else if report.speed <= GROUNDED_VEL {
-            AircraftState::OnGround
+            Some(AircraftState::OnGround)
         } else {
-            AircraftState::Unknown
+            None
         }
     }
 
@@ -170,25 +168,31 @@ impl Beacon {
 
 #[derive(Clone, Debug)]
 struct AircraftStatus {
-    state: AircraftState,
+    state: Option<AircraftState>,
     reports: VecDeque<Beacon>,
 }
 
 impl Default for AircraftStatus {
     fn default() -> Self {
         AircraftStatus {
-            state: AircraftState::Unknown,
+            state: None,
             reports: Default::default(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AircraftState {
-    Airborne,
-    OnGround,
-    Unknown,
+pub enum Event {
+    AircraftChangedState(AircraftChangeStatedEvent),
 }
 
-#[cfg(test)]
-mod tests {}
+pub struct AircraftChangeStatedEvent {
+    pub aircraft_id: String,
+    pub new_state: AircraftState,
+    pub date: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AircraftState {
+    Airborne,
+    OnGround,
+}
