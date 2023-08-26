@@ -1,10 +1,20 @@
-use std::io::{BufRead, BufReader};
 use std::{
     fmt::{self, Display, Formatter, Write as _},
-    io::{Read, Result as IoResult, Write},
+    future::Future as _,
+    io::{BufRead, BufReader, Read, Result as IoResult, Write},
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 use anyhow::{format_err, Result};
+use tokio::{
+    io::{
+        AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt,
+        BufReader as AsyncBufReader, Error as FutError,
+    },
+    pin,
+};
+use tokio_stream::Stream;
 
 use super::Report;
 
@@ -53,9 +63,9 @@ pub enum FilterSpec {
     /// Range around a geo-location
     Range {
         // Latitude degrees
-        lat: i32,
+        lat: f32,
         // Longitude degrees
-        lon: i32,
+        lon: f32,
         // Range in km
         range: u32,
     },
@@ -73,11 +83,11 @@ impl Display for FilterSpec {
     }
 }
 
-pub struct APRSClient<R: Read> {
-    stream: BufReader<R>,
+pub struct APRSClient<R> {
+    stream: R,
 }
 
-impl<RW: Read + Write> APRSClient<RW> {
+impl<RW: Read + Write> APRSClient<BufReader<RW>> {
     pub fn login(
         mut stream: RW,
         creds: &Credentials,
@@ -112,27 +122,57 @@ impl<RW: Read + Write> APRSClient<RW> {
     }
 }
 
-impl<R: Read> APRSClient<R> {
+impl<RW: AsyncReadExt + AsyncWriteExt + Unpin> APRSClient<AsyncBufReader<RW>> {
+    pub async fn async_login(
+        mut stream: RW,
+        creds: &Credentials,
+        filters: &[Filter],
+        verify_login: bool,
+    ) -> Result<Self> {
+        async_login_to_aprs(&mut stream, creds, filters).await?;
+        let mut buf_reader = AsyncBufReader::new(stream);
+
+        if verify_login {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                buf_reader.read_line(&mut line).await?;
+                if line.starts_with('#') {
+                    if line.starts_with("# aprs") {
+                        // Connexion comment
+                    } else if line.starts_with("# logresp") && line.contains("unverified") {
+                        return Err(format_err!("invalid credentials: got response \"{line}\""));
+                    } else if line.starts_with("# Invalid username format") {
+                        return Err(format_err!("error: got response \"{line}\""));
+                    } else {
+                        // Any other comment, accept as logged in
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(Self { stream: buf_reader })
+    }
+}
+
+impl<R> APRSClient<R> {
     pub fn reports(self) -> Reports<R> {
-        Reports::new_buf(self.stream)
+        Reports::new(self.stream)
     }
 }
 
-pub struct Reports<R: Read> {
-    stream: BufReader<R>,
+pub struct Reports<R> {
+    stream: R,
 }
 
-impl<R: Read> Reports<R> {
+impl<R> Reports<R> {
     pub fn new(stream: R) -> Self {
-        Self::new_buf(BufReader::new(stream))
-    }
-
-    pub fn new_buf(stream: BufReader<R>) -> Self {
         Self { stream }
     }
 }
 
-impl<R: Read> Iterator for Reports<R> {
+impl<R: BufRead> Iterator for Reports<R> {
     type Item = Result<Report>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -143,6 +183,29 @@ impl<R: Read> Iterator for Reports<R> {
                 Ok(_) if line.starts_with('#') => (),
                 Ok(_) => return Some(line.parse()),
                 Err(e) => return Some(Err(e.into())),
+            }
+            line.clear();
+        }
+    }
+}
+
+impl<R: AsyncBufRead + Unpin> Stream for Reports<R> {
+    type Item = Result<Report>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut line: String = String::new();
+
+        loop {
+            let read_line = self.stream.read_line(&mut line);
+            pin!(read_line);
+            match read_line.poll(cx) {
+                Poll::Ready(r) => match r {
+                    Ok(0) => return Poll::Ready(None),
+                    Ok(_) if line.starts_with('#') => (),
+                    Ok(_) => return Poll::Ready(Some(line.parse())),
+                    Err(e) => return Poll::Ready(Some(Err(e.into()))),
+                },
+                Poll::Pending => return Poll::Pending,
             }
             line.clear();
         }
@@ -167,6 +230,46 @@ pub fn login_to_aprs<W: Write>(
     }
     writeln!(stream)?;
     stream.flush()
+}
+
+// Can't believe this doesn't exist somewere
+macro_rules! async_write {
+    ($dst:expr, $($arg:tt)*) => {
+        $dst.write_all(format!($($arg)*).as_bytes())
+    };
+}
+
+macro_rules! async_writeln {
+    ($dst:expr $(,)?) => {
+        async_write!($dst, "\n")
+    };
+    ($dst:expr, $($arg:tt)*) => {
+        $dst.write_all(format!($($arg)*).as_bytes())
+    };
+}
+
+pub async fn async_login_to_aprs<W: AsyncWriteExt + Unpin>(
+    stream: &mut W,
+    creds: &Credentials,
+    filters: &[Filter],
+) -> Result<(), FutError> {
+    async_write!(
+        stream,
+        "user {} pass {} vers {} {}",
+        creds.user,
+        creds.password,
+        creds.app_name,
+        creds.app_version
+    )
+    .await?;
+    if !filters.is_empty() {
+        async_write!(stream, " filter").await?;
+        for filter in filters {
+            async_write!(stream, " {}", filter).await?;
+        }
+    }
+    async_writeln!(stream).await?;
+    stream.flush().await
 }
 
 #[cfg(test)]

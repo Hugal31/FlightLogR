@@ -12,6 +12,7 @@ chrono = "0.4.22"
 csv = "1.1.6"
 dms-coordinates = "1.1"
 env_logger = "0.5"
+futures = "0.3.28"
 geo = "0.23"
 itertools = "0.10.5"
 log = "0.4"
@@ -19,6 +20,8 @@ pest = "2.4"
 pest_derive = "2.4"
 serde = { version = "1.0.147", features = ["derive"] }
 # serde_derive = "1.0.147"
+tokio = { version = "1.32", features = ["io-std", "io-util", "fs", "macros", "net", "rt"] }
+tokio-stream = "0.1.14"
 toml = "0.5.9"
 
 [dev-dependencies]

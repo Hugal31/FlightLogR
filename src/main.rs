@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::Read;
-use std::net::TcpStream;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
@@ -11,6 +10,7 @@ use flightlogr::aprs::{
     Report,
 };
 use serde::Deserialize;
+use tokio_stream::{Stream, StreamExt as _};
 
 use flightlogr::events::{DateSource, EventDetector, FixedDateTimeSource, SystemDateTimeSource};
 use flightlogr::ogn::OGN_APRS_URL;
@@ -38,9 +38,10 @@ struct PartialConfig {
 #[derive(Clone, Debug, Deserialize, Parser)]
 struct FilterConfig {
     #[arg(long)]
-    latitude: Option<i32>,
+    latitude: Option<f32>,
     #[arg(long)]
-    longitude: Option<i32>,
+    longitude: Option<f32>,
+    /// Range in km.
     #[arg(long)]
     range: Option<u32>,
 }
@@ -125,7 +126,8 @@ impl Config {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     let config = Config::parse();
     init_logging();
     let datetime_source = if let Some(now) = config.now {
@@ -133,12 +135,11 @@ fn main() -> Result<()> {
     } else {
         Box::new(SystemDateTimeSource) as Box<dyn DateSource>
     };
-    let report_stream = open_reports(config)?;
+    let mut report_stream = open_reports(config).await?;
     let mut event_detector = EventDetector::with_date_source(datetime_source);
-    for report in report_stream {
+    while let Some(report) = report_stream.next().await {
         match report {
             Ok(r) => {
-                //println!("{:?}", r);
                 event_detector.add_report(&r);
             }
             Err(e) => log::warn!("could not parse report: {}", e),
@@ -157,17 +158,23 @@ fn init_logging() {
     }
 }
 
-fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
+async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Report>> + Unpin>> {
+    use tokio::net::TcpStream;
+
     match config.aprs_uri.as_str() {
-        "-" => Ok(Box::new(Reports::new(std::io::stdin()))),
-        file_uri if file_uri.starts_with("file://") => open_report_file(&file_uri[7..]),
-        file_uri if file_uri.starts_with("./") => open_report_file(&file_uri[2..]),
+        "-" => Ok(Box::new(Reports::new(tokio::io::BufReader::new(
+            tokio::io::stdin(),
+        )))),
+        file_uri if file_uri.starts_with("file://") => open_report_file(&file_uri[7..]).await,
+        file_uri if file_uri.starts_with("./") => open_report_file(&file_uri[2..]).await,
         url => {
             if config.filters.is_empty() {
                 log::warn!("No filters declared.");
             }
-            let stream = TcpStream::connect(url)?;
-            let client = APRSClient::login(
+            log::debug!("Connecting to APRS server at {url}");
+            let stream = TcpStream::connect(url).await?;
+            log::debug!("Authenticating to APRS server");
+            let client = APRSClient::async_login(
                 stream,
                 &Credentials {
                     user: config
@@ -181,26 +188,36 @@ fn open_reports(config: Config) -> Result<Box<dyn Iterator<Item = Result<Report>
                 },
                 &config.filters,
                 false,
-            )?;
+            )
+            .await?;
+            log::info!("Connected to APRS server");
             Ok(Box::new(client.reports()))
         }
     }
 }
 
 #[cfg(unix)]
-fn open_report_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
+async fn open_report_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<Box<dyn Stream<Item = Result<Report>> + Unpin>> {
     use std::fs::metadata;
-    use std::os::unix::{fs::FileTypeExt, net::UnixStream};
+    use std::os::unix::fs::FileTypeExt;
 
     let path = path.as_ref();
     if metadata(path)?.file_type().is_socket() {
-        Ok(Box::new(Reports::new(UnixStream::connect(path)?)))
+        Ok(Box::new(Reports::new(tokio::io::BufReader::new(
+            tokio::net::UnixStream::connect(path).await?,
+        ))))
     } else {
-        Ok(Box::new(Reports::new(File::open(path)?)))
+        Ok(Box::new(Reports::new(tokio::io::BufReader::new(
+            tokio::fs::File::open(path).await?,
+        ))))
     }
 }
 
 #[cfg(not(unix))]
-fn open_report_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn Iterator<Item = Result<Report>>>> {
-    Ok(Box::new(Reports::new(File::open(path)?)))
+async fn open_report_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<Box<dyn Stream<Item = Result<Report>> + Unpin>> {
+    Ok(Box::new(Reports::new(tokio::fs::File::open(path).await?)))
 }
