@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use flightlogr::aprs::{
-    client::{APRSClient, Credentials, Filter, FilterSpec, Reports},
+    client::{AutoClient, Credentials, Filter, FilterSpec, Reports},
     Report,
 };
 use serde::Deserialize;
@@ -159,8 +159,6 @@ fn init_logging() {
 }
 
 async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Report>> + Unpin>> {
-    use tokio::net::TcpStream;
-
     match config.aprs_uri.as_str() {
         "-" => Ok(Box::new(Reports::new(tokio::io::BufReader::new(
             tokio::io::stdin(),
@@ -171,12 +169,9 @@ async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Rep
             if config.filters.is_empty() {
                 log::warn!("No filters declared.");
             }
-            log::debug!("Connecting to APRS server at {url}");
-            let stream = TcpStream::connect(url).await?;
-            log::debug!("Authenticating to APRS server");
-            let client = APRSClient::async_login(
-                stream,
-                &Credentials {
+            let client = AutoClient::new(
+                url.to_string(),
+                Credentials {
                     user: config
                         .aprs_user
                         .ok_or_else(|| anyhow!("missing APRS username"))?,
@@ -186,12 +181,12 @@ async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Rep
                     app_name: "flightLGo".to_owned(), // env!("CARGO_PKG_NAME").to_owned(),
                     app_version: "0.0.0b1".to_string(), //, env!("CARGO_PKG_VERSION").to_owned(),
                 },
-                &config.filters,
+                config.filters.clone(),
                 false,
             )
             .await?;
             log::info!("Connected to APRS server");
-            Ok(Box::new(client.reports()))
+            Ok(Box::new(client))
         }
     }
 }

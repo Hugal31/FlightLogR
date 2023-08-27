@@ -7,11 +7,13 @@ use std::{
 };
 
 use anyhow::{format_err, Result};
+use futures::{FutureExt as _, StreamExt as _};
 use tokio::{
     io::{
         AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt,
         BufReader as AsyncBufReader, Error as FutError,
     },
+    net::TcpStream,
     pin,
 };
 use tokio_stream::Stream;
@@ -211,6 +213,78 @@ impl<R: AsyncBufRead + Unpin> Stream for Reports<R> {
                 Poll::Pending => return Poll::Pending,
             }
             line.clear();
+        }
+    }
+}
+
+/// Auto reconnecting client.
+pub struct AutoClient {
+    url: String,
+    creds: Credentials,
+    filters: Vec<Filter>,
+    verify_login: bool,
+    reports: Reports<AsyncBufReader<TcpStream>>,
+}
+
+impl AutoClient {
+    pub async fn new(
+        url: String,
+        creds: Credentials,
+        filters: Vec<Filter>,
+        verify_login: bool,
+    ) -> Result<Self> {
+        let client = Self::create_client(&url, &creds, &filters, verify_login).await?;
+        let reports = client.reports();
+        Ok(Self {
+            url,
+            creds,
+            filters,
+            verify_login,
+            reports,
+        })
+    }
+
+    async fn create_client(
+        url: &str,
+        creds: &Credentials,
+        filters: &[Filter],
+        verify_login: bool,
+    ) -> Result<APRSClient<AsyncBufReader<TcpStream>>> {
+        log::debug!("Connecting to APRS server at {url}");
+        let stream = TcpStream::connect(&url).await?;
+        log::debug!("Authenticating to APRS server");
+        let client = APRSClient::async_login(stream, creds, filters, verify_login).await?;
+        log::debug!("Authenticated");
+        Ok(client)
+    }
+
+    async fn reconnect(&mut self) -> Result<()> {
+        let client =
+            Self::create_client(&self.url, &self.creds, &self.filters, self.verify_login).await?;
+        self.reports = client.reports();
+        Ok(())
+    }
+}
+
+impl Stream for AutoClient {
+    type Item = Result<Report>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match self.reports.poll_next_unpin(cx) {
+                Poll::Ready(Some(x)) => return Poll::Ready(Some(x)),
+                Poll::Ready(None) => {
+                    log::info!("Disconnected from APRS server, reconnecting...");
+                    let reconnecting = self.reconnect();
+                    pin!(reconnecting);
+                    match reconnecting.poll_unpin(cx) {
+                        Poll::Ready(Ok(())) => (),
+                        Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                }
+                Poll::Pending => return Poll::Pending,
+            }
         }
     }
 }
