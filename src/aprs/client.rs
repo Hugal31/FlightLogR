@@ -201,7 +201,10 @@ impl<R: AsyncBufRead + Unpin> Stream for Reports<R> {
             match read_line.poll(cx) {
                 Poll::Ready(r) => match r {
                     Ok(0) => return Poll::Ready(None),
-                    Ok(_) if line.starts_with('#') => (),
+                    Ok(_) if line.starts_with('#') => {
+                        let comment = line.trim_start_matches('#').trim();
+                        log::debug!("Received comment {comment}");
+                    }
                     Ok(_) => return Poll::Ready(Some(line.parse())),
                     Err(e) => return Poll::Ready(Some(Err(e.into()))),
                 },
