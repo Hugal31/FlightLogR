@@ -145,15 +145,8 @@ async fn main() -> Result<()> {
     init_logging();
     let config = Config::parse();
 
-    if let Some(firebase_conf) = config.firebase {
-        let sender = flightlogr::notifications::FirebaseNotificationSender::new(firebase_conf.api_key, firebase_conf.topic_id);
-        sender.notify_event(&flightlogr::events::Event::AircraftChangedState(flightlogr::events::AircraftChangeStatedEvent {
-            aircraft_id: "F-CGTG".to_string(),
-            new_state: flightlogr::events::AircraftState::Airborne,
-            date: DateTime::default(),
-        })).await?;
-    }
-    return Ok(());
+    let firebase_conf = config.firebase.as_ref().ok_or_else(|| anyhow!("Missiong firebase configuration"))?;
+    let sender = flightlogr::notifications::FirebaseNotificationSender::new(&firebase_conf.api_key, &firebase_conf.topic_id);
 
     let datetime_source = if let Some(now) = config.now {
         Box::new(FixedDateTimeSource(now)) as Box<dyn DateSource>
@@ -165,7 +158,9 @@ async fn main() -> Result<()> {
     while let Some(report) = report_stream.next().await {
         match report {
             Ok(r) => {
-                event_detector.add_report(&r);
+                if let Some(event) = event_detector.add_report(&r) {
+                    sender.notify_event(&event).await?;
+                }
             }
             Err(e) => log::warn!("could not parse report: {}", e),
         };

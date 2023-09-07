@@ -47,14 +47,16 @@ impl EventDetector {
         }
     }
 
-    pub fn add_report(&mut self, report: &Report) {
+    pub fn add_report(&mut self, report: &Report) -> Option<Event> {
         if let Report::PositionReport(pr) = report {
-            self.add_position_report(pr);
+            let report = self.add_position_report(pr);
             self.maintain();
+            return report;
         }
+        None
     }
 
-    fn add_position_report(&mut self, report: &PositionReport) {
+    fn add_position_report(&mut self, report: &PositionReport) -> Option<Event> {
         if let Some(id) = report.id() {
             let status: &mut AircraftStatus = self.database.entry(id.clone()).or_default();
             if let Some(stamped_report) = Beacon::new(report.clone(), self.datetime_source.now()) {
@@ -75,10 +77,16 @@ impl EventDetector {
                     if status.state != Some(state) {
                         status.state = Some(state);
                         log::info!("{date} Got event {state:?} at for {id}");
+                        return Some(Event::AircraftChangedState(AircraftChangeStatedEvent {
+                            aircraft_id: id.clone(),
+                            new_state: state,
+                            date,
+                        }));
                     }
                 }
             }
         }
+        None
     }
 
     fn detect_event(status: &AircraftStatus) -> Option<(DateTime<Utc>, AircraftState)> {

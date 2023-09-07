@@ -1,6 +1,5 @@
 use anyhow::Result;
-use fcm;
-use fcm::{FcmError, FcmResponse, Message, Notification};
+use fcm::FcmResponse;
 use serde::Serialize;
 
 use crate::events::{AircraftState, Event};
