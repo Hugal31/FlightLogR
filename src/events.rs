@@ -189,10 +189,12 @@ impl Default for AircraftStatus {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Event {
     AircraftChangedState(AircraftChangeStatedEvent),
 }
 
+#[derive(Clone, Debug)]
 pub struct AircraftChangeStatedEvent {
     pub aircraft_id: String,
     pub new_state: AircraftState,
