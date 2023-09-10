@@ -2,19 +2,18 @@ use std::{
     fmt::{self, Display, Formatter, Write as _},
     future::Future as _,
     io::{BufRead, BufReader, Read, Result as IoResult, Write},
-    pin::Pin,
+    pin::{pin, Pin},
     task::{Context, Poll},
 };
 
 use anyhow::{format_err, Result};
-use futures::{FutureExt as _, StreamExt as _};
+use futures::StreamExt as _;
 use tokio::{
     io::{
         AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt,
         BufReader as AsyncBufReader, Error as FutError,
     },
     net::TcpStream,
-    pin,
 };
 use tokio_stream::Stream;
 
@@ -198,8 +197,7 @@ impl<R: AsyncBufRead + Unpin> Stream for Reports<R> {
         let mut line: String = String::new();
 
         loop {
-            let read_line = self.stream.read_line(&mut line);
-            pin!(read_line);
+            let read_line = pin!(self.stream.read_line(&mut line));
             match read_line.poll(cx) {
                 Poll::Ready(r) => match r {
                     Ok(0) => return Poll::Ready(None),
@@ -264,28 +262,26 @@ impl AutoClient {
         self.reports = client.reports();
         Ok(())
     }
+
+    async fn get_next_report(&mut self) -> Option<Result<Report>> {
+        loop {
+            match self.reports.next().await {
+                Some(x) => return Some(x),
+                None => {
+                    if let Err(e) = self.reconnect().await {
+                        return Some(Err(e));
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Stream for AutoClient {
     type Item = Result<Report>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            match self.reports.poll_next_unpin(cx) {
-                Poll::Ready(Some(x)) => return Poll::Ready(Some(x)),
-                Poll::Ready(None) => {
-                    log::info!("Disconnected from APRS server, reconnecting...");
-                    let reconnecting = self.reconnect();
-                    pin!(reconnecting);
-                    match reconnecting.poll_unpin(cx) {
-                        Poll::Ready(Ok(())) => (),
-                        Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-                Poll::Pending => return Poll::Pending,
-            }
-        }
+        pin!(self.get_next_report()).poll(cx)
     }
 }
 
