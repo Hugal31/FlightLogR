@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::{format_err, Result};
-use futures::StreamExt as _;
 use tokio::{
     io::{
         AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt,
@@ -173,6 +172,25 @@ impl<R> Reports<R> {
     }
 }
 
+impl<R: AsyncBufRead + Unpin> Reports<R> {
+    pub async fn next_report(&mut self) -> Option<Result<Report>> {
+        let mut line: String = String::new();
+
+        loop {
+            match self.stream.read_line(&mut line).await {
+                Ok(0) => return None,
+                Ok(_) if line.starts_with('#') => {
+                    let comment = line.trim_start_matches('#').trim();
+                    log::debug!("Received comment {comment}");
+                }
+                Ok(_) => return Some(line.parse()),
+                Err(e) => return Some(Err(e.into())),
+            }
+            line.clear();
+        }
+    }
+}
+
 impl<R: BufRead> Iterator for Reports<R> {
     type Item = Result<Report>;
 
@@ -242,6 +260,21 @@ impl AutoClient {
         })
     }
 
+    pub fn as_stream(self) -> impl Stream<Item=Result<Report>> {
+        futures::stream::unfold(self, |mut client| async {
+            loop {
+                match client.reports.next_report().await {
+                    Some(x) => return Some((x, client)),
+                    None => {
+                        if let Err(e) = client.reconnect().await {
+                            return Some((Err(e), client));
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     async fn create_client(
         url: &str,
         creds: &Credentials,
@@ -249,7 +282,7 @@ impl AutoClient {
         verify_login: bool,
     ) -> Result<APRSClient<AsyncBufReader<TcpStream>>> {
         log::debug!("Connecting to APRS server at {url}");
-        let stream = TcpStream::connect(&url).await?;
+        let stream = TcpStream::connect(url).await?;
         log::debug!("Authenticating to APRS server");
         let client = APRSClient::async_login(stream, creds, filters, verify_login).await?;
         log::debug!("Authenticated");
@@ -261,27 +294,6 @@ impl AutoClient {
             Self::create_client(&self.url, &self.creds, &self.filters, self.verify_login).await?;
         self.reports = client.reports();
         Ok(())
-    }
-
-    async fn get_next_report(&mut self) -> Option<Result<Report>> {
-        loop {
-            match self.reports.next().await {
-                Some(x) => return Some(x),
-                None => {
-                    if let Err(e) = self.reconnect().await {
-                        return Some(Err(e));
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Stream for AutoClient {
-    type Item = Result<Report>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        pin!(self.get_next_report()).poll(cx)
     }
 }
 

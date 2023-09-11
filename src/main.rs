@@ -205,7 +205,8 @@ async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Rep
             )
             .await?;
             log::info!("Connected to APRS server");
-            Ok(Box::new(client))
+            // Meh
+            Ok(Box::new(Box::pin(client.as_stream())))
         }
     }
 }
