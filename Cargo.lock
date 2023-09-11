@@ -512,6 +512,7 @@ dependencies = [
  "log",
  "pest",
  "pest_derive",
+ "reqwest",
  "serde",
  "socketpair",
  "tokio",

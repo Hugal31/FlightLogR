@@ -260,7 +260,7 @@ impl AutoClient {
         })
     }
 
-    pub fn as_stream(self) -> impl Stream<Item=Result<Report>> {
+    pub fn as_stream(self) -> impl Stream<Item = Result<Report>> {
         futures::stream::unfold(self, |mut client| async {
             loop {
                 match client.reports.next_report().await {

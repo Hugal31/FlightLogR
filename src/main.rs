@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -13,6 +14,7 @@ use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt as _};
 
 use flightlogr::events::{DateSource, EventDetector, FixedDateTimeSource, SystemDateTimeSource};
+use flightlogr::ogn::ddb::Device;
 use flightlogr::ogn::OGN_APRS_URL;
 
 /// Merged CLI arguments and config.
@@ -145,13 +147,20 @@ async fn main() -> Result<()> {
     init_logging();
     let config = Config::parse();
 
-    let firebase_conf = config.firebase.as_ref().ok_or_else(|| anyhow!("Missiong firebase configuration"))?;
-    let sender = flightlogr::notifications::FirebaseNotificationSender::new(&firebase_conf.api_key, &firebase_conf.topic_id);
+    let firebase_conf = config
+        .firebase
+        .as_ref()
+        .ok_or_else(|| anyhow!("Missing firebase configuration"))?;
+    let mut sender = flightlogr::notifications::FirebaseNotificationSender::new(
+        &firebase_conf.api_key,
+        &firebase_conf.topic_id,
+    );
+    sender.set_ddb(get_ogn_ddb().await?);
 
-    let datetime_source = if let Some(now) = config.now {
-        Box::new(FixedDateTimeSource(now)) as Box<dyn DateSource>
+    let datetime_source: Box<dyn DateSource> = if let Some(now) = config.now {
+        Box::new(FixedDateTimeSource(now))
     } else {
-        Box::new(SystemDateTimeSource) as Box<dyn DateSource>
+        Box::new(SystemDateTimeSource)
     };
     let mut report_stream = open_reports(config).await?;
     let mut event_detector = EventDetector::with_date_source(datetime_source);
@@ -176,6 +185,12 @@ fn init_logging() {
             .try_init()
             .expect("Failed to initialize logging")
     }
+}
+
+async fn get_ogn_ddb() -> Result<HashMap<String, Device>> {
+    use flightlogr::ogn::ddb::{index_by_id, read_database, OGN_DDB_URL};
+    let body = reqwest::get(OGN_DDB_URL).await?.text().await?;
+    read_database(body.as_bytes()).map(index_by_id)
 }
 
 async fn open_reports(config: Config) -> Result<Box<dyn Stream<Item = Result<Report>> + Unpin>> {

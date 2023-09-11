@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Read;
 
 use anyhow::{format_err, Result};
@@ -55,6 +56,10 @@ impl<R: Read> Iterator for DeviceIterator<R> {
 
 pub fn read_database<R: Read>(r: R) -> Result<Vec<Device>> {
     DeviceIterator::new(r)?.collect()
+}
+
+pub fn index_by_id(devices: Vec<Device>) -> HashMap<String, Device> {
+    devices.into_iter().map(|d| (d.id.clone(), d)).collect()
 }
 
 /// Remove the leading '#' from the headers, because the OGN database adds a '#' to the CSV header
