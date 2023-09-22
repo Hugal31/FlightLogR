@@ -116,6 +116,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aprs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dms-coordinates",
+ "geo",
+ "itertools",
+ "log",
+ "pest",
+ "pest_derive",
+]
+
+[[package]]
 name = "assert_approx_eq"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -498,6 +512,7 @@ name = "flightlogr"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aprs",
  "assert_matches",
  "chrono",
  "clap",
@@ -505,7 +520,6 @@ dependencies = [
  "dms-coordinates",
  "env_logger",
  "fcm",
- "float_eq",
  "futures",
  "geo",
  "itertools",
@@ -519,12 +533,6 @@ dependencies = [
  "tokio-stream",
  "toml",
 ]
-
-[[package]]
-name = "float_eq"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28a80e3145d8ad11ba0995949bbcf48b9df2be62772b3d351ef017dff6ecb853"
 
 [[package]]
 name = "float_next_after"
@@ -962,9 +970,9 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]

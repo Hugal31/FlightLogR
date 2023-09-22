@@ -121,6 +121,16 @@ impl PositionReport {
             .next()
     }
 
+    pub fn turn_rate(&self) -> Option<f64> {
+        self.comments
+            .iter()
+            .filter_map(|c| match c {
+                &Comment::TurningRate(t) => Some(t),
+                _ => None,
+            })
+            .next()
+    }
+
     pub fn position_precision_enhancement(&self) -> Option<(u8, u8)> {
         self.comments
             .iter()
@@ -410,7 +420,7 @@ pub enum Comment {
     FlightLevel(f64),
     /// Vertical speed in feet/m,
     ClimbRate(f64),
-    /// Turning rate in degrees/min, positive is clockwise
+    /// Turning rate in 180degrees/min, positive is clockwise
     TurningRate(f64),
     Unknown(String),
 }

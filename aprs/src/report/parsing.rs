@@ -11,7 +11,7 @@ use super::{
 };
 
 #[derive(Parser)]
-#[grammar = "aprs/aprs_v2.pest"]
+#[grammar = "aprs_v2.pest"]
 pub struct APRSParser;
 
 impl APRSParser {

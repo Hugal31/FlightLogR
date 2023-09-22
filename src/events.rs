@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Duration, Utc};
 use itertools::Itertools as _;
 
-use crate::aprs::report::{PositionReport, Report};
+use aprs::{PositionReport, Report};
 
 const AIRBORNE_VEL: f32 = 30.;
 const GROUNDED_VEL: f32 = 10.;
