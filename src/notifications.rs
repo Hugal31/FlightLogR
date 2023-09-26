@@ -35,7 +35,7 @@ impl FirebaseNotificationSender {
             .data(&self.prepare_message_data(event))?
             .priority(fcm::Priority::High)
             .delay_while_idle(false)
-            .time_to_live(120);
+            .time_to_live(0);
         let message = message_builder.finalize();
         self.client.send(message).await.map_err(Into::into)
     }
