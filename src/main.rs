@@ -6,9 +6,12 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use flightlogr::aprs::{
-    client::{AutoClient, Credentials, Filter, FilterSpec, Reports},
-    Report,
+use flightlogr::{
+    aprs::{
+        client::{AutoClient, Credentials, Filter, FilterSpec, Reports},
+        Report,
+    },
+    events,
 };
 use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt as _};
@@ -37,6 +40,9 @@ struct PartialConfig {
     #[arg(long)]
     #[serde(skip)]
     now: Option<DateTime<Utc>>,
+    #[arg(short, action)]
+    #[serde(skip)]
+    test_push: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Parser)]
@@ -84,6 +90,7 @@ impl PartialConfig {
             filters,
             firebase,
             now,
+            test_push,
             ..
         } = self;
         Ok(Config {
@@ -104,6 +111,7 @@ impl PartialConfig {
             },
             firebase,
             now,
+            test_push,
         })
     }
 }
@@ -116,6 +124,7 @@ struct Config {
     filters: Vec<Filter>,
     firebase: Option<FirebaseConfig>,
     now: Option<DateTime<Utc>>,
+    test_push: bool,
 }
 
 impl Config {
@@ -156,6 +165,18 @@ async fn main() -> Result<()> {
         &firebase_conf.topic_id,
     );
     sender.set_ddb(get_ogn_ddb().await?);
+
+    if config.test_push {
+        sender
+            .notify_event(&crate::events::Event::AircraftChangedState(
+                crate::events::AircraftChangeStatedEvent {
+                    aircraft_id: "Test".to_string(),
+                    new_state: crate::events::AircraftState::Airborne,
+                    date: Utc::now(),
+                },
+            ))
+            .await?;
+    }
 
     let datetime_source: Box<dyn DateSource> = if let Some(now) = config.now {
         Box::new(FixedDateTimeSource(now))
