@@ -45,7 +45,8 @@ impl FirebaseNotificationSender {
             Event::AircraftChangedState(e) => {
                 let aircraft_immatriculation = self
                     .ddb
-                    .get(&e.aircraft_id)
+                    .get(&e.aircraft_id[2..])
+                    .or_else(|| self.ddb.get(&e.aircraft_id))
                     .map(|d| d.registration.as_str())
                     .unwrap_or("")
                     .to_string();

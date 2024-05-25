@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
         sender
             .notify_event(&crate::events::Event::AircraftChangedState(
                 crate::events::AircraftChangeStatedEvent {
-                    aircraft_id: "Test".to_string(),
+                    aircraft_id: "06DDAC8D".to_string(),
                     new_state: crate::events::AircraftState::Airborne,
                     date: Utc::now(),
                 },
