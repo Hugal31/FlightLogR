@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -30,6 +30,8 @@ struct PartialConfig {
     aprs_user: Option<String>,
     #[arg(long)]
     aprs_password: Option<String>,
+    #[arg(long)]
+    aircraft_whitelist: Vec<String>,
     #[arg(short, long, help = "Config file path")]
     #[serde(skip)]
     config_file: Option<String>,
@@ -74,6 +76,9 @@ impl PartialConfig {
         if self.aprs_password.is_none() {
             self.aprs_password = other.aprs_password;
         }
+        if self.aircraft_whitelist.is_empty() {
+            self.aircraft_whitelist = other.aircraft_whitelist;
+        }
         if self.filters.is_none() {
             self.filters = other.filters
         }
@@ -87,6 +92,7 @@ impl PartialConfig {
             aprs_uri,
             aprs_user,
             aprs_password,
+            aircraft_whitelist,
             filters,
             firebase,
             now,
@@ -97,6 +103,7 @@ impl PartialConfig {
             aprs_uri: aprs_uri.unwrap_or_else(|| OGN_APRS_URL.to_owned()),
             aprs_user,
             aprs_password,
+            aircraft_whitelist: HashSet::from_iter(aircraft_whitelist.into_iter()),
             filters: match filters.as_ref() {
                 Some(FilterConfig {
                     latitude: Some(latitude),
@@ -121,6 +128,7 @@ struct Config {
     aprs_uri: String,
     aprs_user: Option<String>,
     aprs_password: Option<String>,
+    aircraft_whitelist: HashSet<String>,
     filters: Vec<Filter>,
     firebase: Option<FirebaseConfig>,
     now: Option<DateTime<Utc>>,
@@ -164,7 +172,9 @@ async fn main() -> Result<()> {
         &firebase_conf.api_key,
         &firebase_conf.topic_id,
     );
-    sender.set_ddb(get_ogn_ddb().await?);
+
+    let ogn_ddb = get_ogn_ddb().await?;
+    sender.set_ddb(ogn_ddb.clone());
 
     if config.test_push {
         sender
@@ -178,6 +188,8 @@ async fn main() -> Result<()> {
             .await?;
     }
 
+    let aircraft_whitelist = config.aircraft_whitelist.clone();
+
     let datetime_source: Box<dyn DateSource> = if let Some(now) = config.now {
         Box::new(FixedDateTimeSource(now))
     } else {
@@ -188,6 +200,16 @@ async fn main() -> Result<()> {
     while let Some(report) = report_stream.next().await {
         match report {
             Ok(r) => {
+                match &r {
+                    aprs::Report::PositionReport(p) => {
+                        if let Some(id) = p.id() {
+                            if !is_whitelisted(&id, &aircraft_whitelist, &ogn_ddb) {
+                                continue;
+                            }
+                        }
+                    }
+                    _ => (),
+                };
                 if let Some(event) = event_detector.add_report(&r) {
                     sender.notify_event(&event).await?;
                 }
@@ -197,6 +219,15 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_whitelisted(id: &String, whitelist: &HashSet<String>, db: &HashMap<String, Device>) -> bool {
+    whitelist.contains(id)
+        || db
+            .get(id)
+            .or_else(|| db.get(&id[2..]))
+            .map(|d| d.registration.starts_with("F-C"))
+            .unwrap_or(false)
 }
 
 fn init_logging() {
