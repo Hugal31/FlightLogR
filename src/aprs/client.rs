@@ -366,9 +366,9 @@ mod tests {
         assert_eq!(Filter::new(FilterSpec::MyRange(42)).to_string(), "m/42");
         assert_eq!(
             Filter::negate(FilterSpec::Range {
-                lat: 40,
-                lon: 18,
-                range: 10
+                lat: 40.0,
+                lon: 18.0,
+                range: 10,
             })
             .to_string(),
             "-r/40/18/10"

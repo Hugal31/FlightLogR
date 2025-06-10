@@ -1,16 +1,13 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 
-use flightlogr::aprs::client::{APRSClient, Credentials};
-use flightlogr::aprs::{
-    client::Reports,
-    report::parsing::{APRSParser, Rule},
-};
+use aprs::report::parsing::{APRSParser, Rule};
+use flightlogr::aprs::client::{APRSClient, Credentials, Reports};
 
 #[test]
 fn read_glidernet_sample() {
     let file = File::open("tests/glidernet-example.txt").expect("open file");
-    let reports = Reports::new(file);
+    let reports = Reports::new(BufReader::new(file));
     for report in reports {
         report.expect("should have parsed");
     }
