@@ -31,6 +31,7 @@ struct PartialConfig {
     #[arg(long)]
     aprs_password: Option<String>,
     #[arg(long)]
+    #[serde(default)]
     aircraft_whitelist: Vec<String>,
     #[arg(short, long, help = "Config file path")]
     #[serde(skip)]
