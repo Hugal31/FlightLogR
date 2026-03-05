@@ -61,7 +61,7 @@ struct FilterConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 struct FirebaseConfig {
-    api_key: String,
+    token_path: String,
     topic_id: String,
 }
 
@@ -170,15 +170,15 @@ async fn main() -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow!("Missing firebase configuration"))?;
     let mut sender = flightlogr::notifications::FirebaseNotificationSender::new(
-        &firebase_conf.api_key,
+        &firebase_conf.token_path,
         &firebase_conf.topic_id,
-    );
+    )?;
 
     let ogn_ddb = get_ogn_ddb().await?;
     sender.set_ddb(ogn_ddb.clone());
 
     if config.test_push {
-        sender
+        let res = sender
             .notify_event(&crate::events::Event::AircraftChangedState(
                 crate::events::AircraftChangeStatedEvent {
                     aircraft_id: "06DDAC8D".to_string(),
@@ -186,7 +186,15 @@ async fn main() -> Result<()> {
                     date: Utc::now(),
                 },
             ))
-            .await?;
+            .await;
+
+        match res {
+            Ok(_) => (),
+            Err(e) => {
+                eprintln!("Error: {} {:?}", e, e);
+                return Err(e.into());
+            }
+        }
     }
 
     let aircraft_whitelist = config.aircraft_whitelist.clone();

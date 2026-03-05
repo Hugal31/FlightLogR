@@ -1,5 +1,5 @@
 use anyhow::Result;
-use fcm::FcmResponse;
+use fcm_notification::{FcmNotification, NotificationPayload};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -7,37 +7,37 @@ use crate::events::{AircraftState, Event};
 use crate::ogn::ddb::Device;
 
 pub struct FirebaseNotificationSender {
-    client: fcm::Client,
-    api_key: String,
     topic_id: String,
     ddb: HashMap<String, Device>,
+    fcm_client: FcmNotification,
 }
 
 impl FirebaseNotificationSender {
-    pub fn new<S: Into<String>>(api_key: S, topic_id: S) -> Self {
-        Self {
-            client: fcm::Client::new(),
-            api_key: api_key.into(),
+    pub fn new<S: Into<String>>(token_path: &str, topic_id: S) -> Result<Self> {
+        Ok(Self {
             topic_id: topic_id.into(),
             ddb: HashMap::default(),
-        }
+            fcm_client: FcmNotification::new(token_path)?,
+        })
     }
 
     pub fn set_ddb(&mut self, ddb: HashMap<String, Device>) {
         self.ddb = ddb;
     }
 
-    pub async fn notify_event(&self, event: &Event) -> Result<FcmResponse> {
+    pub async fn notify_event(&self, event: &Event) -> Result<()> {
         log::debug!("Sending notification for event {:?}", event);
-        let to = format!("/topics/{}", self.topic_id);
-        let mut message_builder = fcm::MessageBuilder::new(&self.api_key, &to);
-        message_builder
-            .data(&self.prepare_message_data(event))?
-            .priority(fcm::Priority::High)
-            .delay_while_idle(false)
-            .time_to_live(0);
-        let message = message_builder.finalize();
-        self.client.send(message).await.map_err(Into::into)
+        let data = self.prepare_message_data(event);
+        // TODO Have priority
+        let notification = NotificationPayload {
+            topic: Some(&self.topic_id),
+            data: Some(serde_json::to_value(data)?),
+            ..Default::default()
+        };
+        self.fcm_client
+            .send_notification(&notification)
+            .await
+            .map_err(Into::into)
     }
 
     fn prepare_message_data(&self, event: &Event) -> EventData {
@@ -53,7 +53,7 @@ impl FirebaseNotificationSender {
                 let data = AircraftChangedStateData {
                     aircraft_id: e.aircraft_id.clone(),
                     aircraft_immatriculation,
-                    date: e.date.timestamp(),
+                    date: e.date.timestamp().to_string(),
                 };
                 match e.new_state {
                     AircraftState::Airborne => EventData::AircraftTookOff(data),
@@ -77,5 +77,5 @@ enum EventData {
 struct AircraftChangedStateData {
     aircraft_id: String,
     aircraft_immatriculation: String,
-    date: i64,
+    date: String,
 }
