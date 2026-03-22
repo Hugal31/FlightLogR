@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::events::{AircraftState, Event};
-use crate::ogn::ddb::Device;
+use ogn::ddb::Device;
 
 pub struct FirebaseNotificationSender {
     topic_id: String,

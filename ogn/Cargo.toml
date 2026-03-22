@@ -1,0 +1,9 @@
+[package]
+name = "ogn"
+version = "0.1.0"
+edition = "2021"
+description = """Connect to OGN APRS stream or get the OGN database."""
+
+[dependencies]
+anyhow = "1.0.65"
+csv = "1.1.6"

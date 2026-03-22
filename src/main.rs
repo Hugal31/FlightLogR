@@ -17,8 +17,8 @@ use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt as _};
 
 use flightlogr::events::{DateSource, EventDetector, FixedDateTimeSource, SystemDateTimeSource};
-use flightlogr::ogn::ddb::Device;
-use flightlogr::ogn::OGN_APRS_URL;
+use ogn::ddb::Device;
+use ogn::OGN_APRS_URL;
 
 /// Merged CLI arguments and config.
 #[derive(Clone, Debug, Deserialize, Parser)]
