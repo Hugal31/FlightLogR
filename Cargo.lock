@@ -525,6 +525,7 @@ dependencies = [
 [[package]]
 name = "fcm-notification"
 version = "0.1.2"
+source = "git+https://github.com/Hugal31/fcm-notification.git#da58155b6015945f35cac6ab476aa82ee2a46693"
 dependencies = [
  "chrono",
  "jsonwebtoken",

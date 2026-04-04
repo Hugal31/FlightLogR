@@ -14,7 +14,7 @@ dms-coordinates = "1.1"
 env_logger = "0.5"
 futures = "0.3.28"
 fcm = "0.9"
-fcm-notification = "0.1.2"
+fcm-notification = { version = "0.1.2", git = "https://github.com/Hugal31/fcm-notification.git" }
 geo = "0.28"
 itertools = "0.11.0"
 log = "0.4"
