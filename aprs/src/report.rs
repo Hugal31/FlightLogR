@@ -140,6 +140,17 @@ impl PositionReport {
             })
             .next()
     }
+
+    /// Return the climb rate in feet per minutes.
+    pub fn climb_rate(&self) -> Option<f64> {
+        self.comments
+            .iter()
+            .filter_map(|c| match c {
+                &Comment::ClimbRate(rate) => Some(rate),
+                _ => None,
+            })
+            .next()
+    }
 }
 
 impl Display for PositionReport {
