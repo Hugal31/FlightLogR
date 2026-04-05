@@ -8,7 +8,7 @@ use ogn::ddb::Device;
 
 pub struct FirebaseNotificationSender {
     topic_id: String,
-    ddb: HashMap<String, Device>,
+    ddb: HashMap<u32, Device>,
     fcm_client: FcmNotification,
 }
 
@@ -21,7 +21,7 @@ impl FirebaseNotificationSender {
         })
     }
 
-    pub fn set_ddb(&mut self, ddb: HashMap<String, Device>) {
+    pub fn set_ddb(&mut self, ddb: HashMap<u32, Device>) {
         self.ddb = ddb;
     }
 
@@ -45,13 +45,13 @@ impl FirebaseNotificationSender {
             Event::AircraftChangedState(e) => {
                 let aircraft_immatriculation = self
                     .ddb
-                    .get(&e.aircraft_id[2..])
+                    .get(&e.aircraft_id)
                     .or_else(|| self.ddb.get(&e.aircraft_id))
                     .map(|d| d.registration.as_str())
                     .unwrap_or("")
                     .to_string();
                 let data = AircraftChangedStateData {
-                    aircraft_id: e.aircraft_id.clone(),
+                    aircraft_id: format!("{:X}", e.aircraft_id),
                     aircraft_immatriculation,
                     date: e.date.timestamp().to_string(),
                 };

@@ -36,6 +36,7 @@ comment_field = _{
     | flight_level
     | unknown_comment }
 altitude = ${ "/A=" ~ digit{6} }
+// From http://wiki.glidernet.org/wiki:ogn-flavoured-aprs
 position_precision_enhancement = ${ "!W" ~ digit{2} ~ "!" }
 id = ${ "id" ~ ASCII_ALPHANUMERIC{8} }
 climb_rate = ${ number_with_sign ~ "fpm" }

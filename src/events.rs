@@ -30,7 +30,7 @@ impl DateSource for FixedDateTimeSource {
 }
 
 pub struct EventDetector {
-    database: HashMap<String, AircraftStatus>,
+    database: HashMap<u32, AircraftStatus>,
     maintain_counter: u32,
     datetime_source: Box<dyn DateSource>,
 }
@@ -57,8 +57,12 @@ impl EventDetector {
     }
 
     fn add_position_report(&mut self, report: &PositionReport) -> Option<Event> {
-        if let Some(id) = report.id() {
-            let status: &mut AircraftStatus = self.database.entry(id.clone()).or_default();
+        if let Some(id) = report
+            .id()
+            .and_then(|s| s.parse::<ogn::Beacon>().ok())
+            .map(|b| b.address)
+        {
+            let status: &mut AircraftStatus = self.database.entry(id).or_default();
             if let Some(stamped_report) = Beacon::new(report.clone(), self.datetime_source.now()) {
                 if status
                     .reports
@@ -78,7 +82,7 @@ impl EventDetector {
                         status.state = Some(state);
                         log::info!("{date} Got event {state:?} at for {id}");
                         return Some(Event::AircraftChangedState(AircraftChangeStatedEvent {
-                            aircraft_id: id.clone(),
+                            aircraft_id: id,
                             new_state: state,
                             date,
                         }));
@@ -196,7 +200,7 @@ pub enum Event {
 
 #[derive(Clone, Debug)]
 pub struct AircraftChangeStatedEvent {
-    pub aircraft_id: String,
+    pub aircraft_id: u32,
     pub new_state: AircraftState,
     pub date: DateTime<Utc>,
 }

@@ -8,13 +8,19 @@ pub const OGN_DDB_URL: &'static str = "https://ddb.glidernet.org/download/";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Device {
-    pub id: String,
+    pub id: u32,
     pub typ: char,
     pub model: String,
     pub registration: String,
     pub common_name: String,
     pub tracked: bool,
     pub identified: bool,
+}
+
+impl Device {
+    pub fn id_str(&self) -> String {
+        format!("{:X}", self.id)
+    }
 }
 
 pub struct DeviceIterator<R: Read> {
@@ -58,7 +64,7 @@ pub fn read_database<R: Read>(r: R) -> Result<Vec<Device>> {
     DeviceIterator::new(r)?.collect()
 }
 
-pub fn index_by_id(devices: Vec<Device>) -> HashMap<String, Device> {
+pub fn index_by_id(devices: Vec<Device>) -> HashMap<u32, Device> {
     devices.into_iter().map(|d| (d.id.clone(), d)).collect()
 }
 
@@ -95,6 +101,7 @@ impl FieldIndexes {
         let id = record
             .get(self.id)
             .ok_or_else(|| format_err!("could not get DEVICE_ID"))?;
+        let id = u32::from_str_radix(id, 16)?;
         let typ = record
             .get(self.typ)
             .ok_or_else(|| format_err!("could not get DEVICE_TYPE"))?;
@@ -118,7 +125,7 @@ impl FieldIndexes {
         let identified = Self::parse_bool(identified_str)?;
 
         Ok(Device {
-            id: id.to_owned(),
+            id: id,
             typ: typ
                 .chars()
                 .next()
@@ -160,7 +167,7 @@ mod test {
         let devices: Vec<Device> = read_database(database.as_bytes()).expect("should parse");
 
         assert_eq!(devices.len(), 3);
-        assert_eq!(devices[0].id, "040893");
+        assert_eq!(devices[0].id, 0x040893);
         assert_eq!(devices[0].typ, 'F');
         assert_eq!(devices[0].model, "X-Wing");
         assert_eq!(devices[0].registration, "SW-1234");

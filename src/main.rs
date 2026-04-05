@@ -32,7 +32,7 @@ struct PartialConfig {
     aprs_password: Option<String>,
     #[arg(long)]
     #[serde(default)]
-    aircraft_whitelist: Vec<String>,
+    aircraft_whitelist: Vec<u32>,
     #[arg(short, long, help = "Config file path")]
     #[serde(skip)]
     config_file: Option<String>,
@@ -129,7 +129,7 @@ struct Config {
     aprs_uri: String,
     aprs_user: Option<String>,
     aprs_password: Option<String>,
-    aircraft_whitelist: HashSet<String>,
+    aircraft_whitelist: HashSet<u32>,
     filters: Vec<Filter>,
     firebase: Option<FirebaseConfig>,
     now: Option<DateTime<Utc>>,
@@ -181,7 +181,7 @@ async fn main() -> Result<()> {
         let res = sender
             .notify_event(&crate::events::Event::AircraftChangedState(
                 crate::events::AircraftChangeStatedEvent {
-                    aircraft_id: "06DDAC8D".to_string(),
+                    aircraft_id: 0xDDAC8D,
                     new_state: crate::events::AircraftState::Airborne,
                     date: Utc::now(),
                 },
@@ -211,8 +211,12 @@ async fn main() -> Result<()> {
             Ok(r) => {
                 match &r {
                     aprs::Report::PositionReport(p) => {
-                        if let Some(id) = p.id() {
-                            if !is_whitelisted(&id, &aircraft_whitelist, &ogn_ddb) {
+                        if let Some(id) = p
+                            .id()
+                            .and_then(|id| id.parse::<ogn::Beacon>().ok())
+                            .map(|b| b.address)
+                        {
+                            if !is_whitelisted(id, &aircraft_whitelist, &ogn_ddb) {
                                 continue;
                             }
                         }
@@ -230,11 +234,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn is_whitelisted(id: &String, whitelist: &HashSet<String>, db: &HashMap<String, Device>) -> bool {
-    whitelist.contains(id)
+fn is_whitelisted(id: u32, whitelist: &HashSet<u32>, db: &HashMap<u32, Device>) -> bool {
+    whitelist.contains(&id)
         || db
-            .get(id)
-            .or_else(|| db.get(&id[2..]))
+            .get(&id)
             .map(|d| d.registration.starts_with("F-C"))
             .unwrap_or(false)
 }
@@ -248,8 +251,8 @@ fn init_logging() {
     }
 }
 
-async fn get_ogn_ddb() -> Result<HashMap<String, Device>> {
-    use flightlogr::ogn::ddb::{index_by_id, read_database, OGN_DDB_URL};
+async fn get_ogn_ddb() -> Result<HashMap<u32, Device>> {
+    use ogn::ddb::{index_by_id, read_database, OGN_DDB_URL};
     let body = reqwest::get(OGN_DDB_URL).await?.text().await?;
     read_database(body.as_bytes()).map(index_by_id)
 }
