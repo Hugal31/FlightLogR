@@ -53,6 +53,30 @@ impl From<u8> for AircraftType {
     }
 }
 
+impl Into<u8> for AircraftType {
+    fn into(self) -> u8 {
+        use AircraftType::*;
+        match self {
+            Reserved => 0,
+            Glider => 1,
+            TowPlane => 2,
+            Helicopter => 3,
+            Skydiver => 4,
+            DropPlane => 5,
+            HandGlider => 6,
+            Paraglider => 7,
+            Aircraft => 8,
+            JetAircraft => 9,
+            Unknown => 0xA,
+            Balloon => 0xB,
+            Airship => 0xC,
+            Unmaned => 0xD,
+            Reserved2 => 0xE,
+            StaticObstacle => 0xF,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddressType {
     Unknown,
@@ -69,6 +93,18 @@ impl From<u8> for AddressType {
             2 => Flarm,
             3 => OgnTracker,
             _ => Unknown,
+        }
+    }
+}
+
+impl Into<u8> for AddressType {
+    fn into(self) -> u8 {
+        use AddressType::*;
+        match self {
+            Unknown => 0,
+            ICAO => 1,
+            Flarm => 2,
+            OgnTracker => 3,
         }
     }
 }
