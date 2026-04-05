@@ -29,6 +29,7 @@ tokio-stream = "0.1.14"
 toml = "0.5.9"
 
 aprs = { version = "0.1.0", path = "aprs" }
+ogn = { version = "0.1.0", path = "ogn" }
 
 [dev-dependencies]
 assert_matches = "1.5"
